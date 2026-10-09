@@ -1,0 +1,9 @@
+PLAYMOZ - SERIES
+
+URL: https://playmoz.xyz/serie/1399/1/1
+Alternativas: /series/1399/1/1 e /tv/1399/1/1
+Servidor 2: https://apps.golplay.site/tv/1399/1/1 (ID, temporada e episodio dinamicos).
+
+Envie o conteudo do ZIP para a raiz do alojamento, mantendo a estrutura.
+Requer Apache com mod_rewrite e AllowOverride habilitados, PHP 7.4+ com cURL.
+Nao foi testado contra servidores remotos.
