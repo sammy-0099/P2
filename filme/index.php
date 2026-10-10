@@ -187,6 +187,17 @@ body.pm-content-playing #pm-ad-video{height:100%!important;max-height:none!impor
 body.pm-content-playing #pm-ad-heading,body.pm-content-playing #pm-ad-note,body.pm-content-playing #pm-ad-fallback{display:none!important}
 @media(max-width:550px){#pm-ad-shell{padding:12px!important}#pm-ad-dialog{border-radius:15px!important}#pm-ad-heading{padding:12px 13px!important;gap:6px!important}#pm-ad-heading span:first-child{font-size:11px!important;gap:7px}#pm-ad-heading span:first-child:before{width:24px;height:24px}#pm-ad-heading span:last-child{font-size:10px!important;text-align:right}#pm-ad-note{font-size:11px!important;padding:12px 13px!important}#pm-ad-fallback{width:calc(100% - 26px);margin:0 13px 13px!important}}
 @media(prefers-reduced-motion:reduce){#pm-ad-dialog{animation:none!important}}
+/* PlayMoz: restaurar comandos de topo acima do player de conteúdo. */
+body.pm-content-playing.pm-video-ready #pm-back-btn,
+body.pm-content-playing.pm-video-ready #down{
+  z-index:1200!important;visibility:visible!important;opacity:1!important;
+  pointer-events:auto!important;position:fixed!important;top:calc(8px + env(safe-area-inset-top, 0px));
+}
+body.pm-content-playing.pm-video-ready #pm-back-btn{left:clamp(6px,2vw,16px)!important}
+body.pm-content-playing.pm-video-ready #down{right:clamp(6px,2vw,16px)!important}
+body.pm-content-playing.pm-video-ready #down-list{z-index:1201!important}
+@media(max-width:380px){body.pm-content-playing.pm-video-ready #pm-back-btn{padding:10px 13px!important}body.pm-content-playing.pm-video-ready .download{padding:10px 8px!important;letter-spacing:0!important}}
+
 </style>
 </head>
 <body>
@@ -304,6 +315,7 @@ player.on('play', function(){
   // Não antecipar o aparecimento dos botões: aguardar o primeiro frame real.
 });
 player.on('firstFrame', pmMarkVideoReady);
+player.on('time', function(evt){ if(!pmAdActive && evt && evt.position > 0 && !document.body.classList.contains('pm-video-ready')) pmMarkVideoReady(); });
 player.on('visualQuality', function(){ /* preservar eventos do JW */ });
 player.on('adRequest', function(){ pmAdAttempted = true; document.body.classList.remove('pm-video-ready'); });
 player.on('adStarted', function(){ pmAdActive = true; pmAdAttempted = true; document.body.classList.remove('pm-video-ready'); });
