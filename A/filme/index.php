@@ -367,7 +367,7 @@ function pm_movie_slugs($tmdbId, $manual='') {
     }
     return array_slice(array_values(array_unique(array_filter($slugs))),0,5);
 }
-function pm_hyper_mp4($slug, $imdb) {
+function pm_server1_mp4($slug, $imdb) {
     if (!preg_match('/^[a-z0-9]+(?:-[a-z0-9]+)*$/',$slug) || !preg_match('/^tt\d{5,12}$/',$imdb) || !function_exists('curl_init')) return null;
     $url=SERVER1_ENDPOINT.rawurlencode($slug);
     $ch=curl_init($url);
@@ -434,7 +434,7 @@ $imdb=isset($_GET['imdb']) && preg_match('/^tt\d{5,12}$/',(string)$_GET['imdb'])
 $season=filter_var($_GET['season']??null,FILTER_VALIDATE_INT,['options'=>['min_range'=>1]]);
 $episode=filter_var($_GET['episode']??null,FILTER_VALIDATE_INT,['options'=>['min_range'=>1]]);
 
-if (isset($_GET['probe']) && $_GET['probe']==='hyper') {
+if (isset($_GET['source']) && $_GET['source']==='1') {
     header('Content-Type: application/json; charset=utf-8');
     header('Cache-Control: no-store');
     if ($type!=='movie' || !$imdb) { echo json_encode(['ok'=>false]); exit; }
@@ -443,7 +443,7 @@ if (isset($_GET['probe']) && $_GET['probe']==='hyper') {
     $slugs=pm_movie_slugs($id ?: pm_tmdb_from_imdb($imdb),$manual);
     $video=null;
     foreach ($slugs as $slug) {
-        $video=pm_hyper_mp4($slug,$imdb);
+        $video=pm_server1_mp4($slug,$imdb);
         if ($video) break;
     }
     if (!$video) { echo json_encode(['ok'=>false]); exit; }
@@ -525,7 +525,7 @@ if($id) $params['id']=$id;
 if($imdb) $params['imdb']=$imdb;
 if($season) $params['season']=$season;
 if($episode) $params['episode']=$episode;
-if (!empty($_GET['slug'])) $params['slug']=(string)$_GET['slug'];
+
 $self=strtok($_SERVER['REQUEST_URI']??'/', '?');
 $base=SITE_BASE.$self.'?'.http_build_query($params);
 ?>
@@ -696,7 +696,6 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:var(--bg);color:#
 const PM_BASE = <?= json_encode($base, JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT) ?>;
 const PM_QUALITIES = <?= json_encode(array_merge($qualities,['default'])) ?>;
 const PM_IMDB = <?= json_encode($imdb) ?>;
-const PM_SLUG = <?= json_encode((string)($_GET['slug']??''), JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT) ?>;
 const PM_ID = <?= (int)$id ?>;
 const PM_TYPE = <?= json_encode($type) ?>;
 const PM_EMBED_URL = PM_ID ? ('<?= EMBED_BASE ?>' + PM_TYPE + '/' + PM_ID) : '';
@@ -754,7 +753,7 @@ async function pmScan() {
   }
   pmLoading();
   try {
-    const url = PM_BASE + '&probe=hyper' + (PM_SLUG ? '&slug=' + encodeURIComponent(PM_SLUG) : '');
+    const url = PM_BASE + '&source=1';
     const r = await fetch(url, {cache:'no-store',credentials:'omit'});
     const data = r.ok ? await r.json() : null;
     const found = data && data.ok && data.server && data.server.embed
