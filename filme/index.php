@@ -96,6 +96,26 @@ if (isset($_GET['embed'])) {
  .down-list li a { color:#fff; text-decoration:none; font-family:"Open-Sans", sans-serif; font-size:18px; width:100% }
  .jw-icon.jw-icon-inline.jw-button-color.jw-reset.jw-icon-rewind { display:none; }
 
+ /* Modal VAST: bloqueia toda a interface enquanto o anúncio está ativo. */
+ #pm-ad-shell{position:fixed;inset:0;z-index:100;display:flex;align-items:center;justify-content:center;padding:20px;background:rgba(2,3,9,.94);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);box-sizing:border-box;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+ #pm-ad-dialog{width:min(720px,100%);background:#10131b;border:1px solid #323849;border-radius:18px;overflow:hidden;box-shadow:0 35px 120px #000;box-sizing:border-box}
+ #pm-ad-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 16px;color:#f5f5f7;font-size:13px;font-weight:650}
+ #pm-ad-heading span:last-child{color:#a2a6b4;font-size:11px;font-weight:500}
+ #pm-ad-video{width:100%;aspect-ratio:16/9;background:#000;position:relative;overflow:hidden}
+ #ani-player{width:100%!important;height:100%!important}
+ #pm-ad-note{padding:11px 16px;color:#a2a6b4;font-size:12px;line-height:1.5;text-align:center}
+ #pm-ad-fallback{display:none;margin:0 16px 16px;padding:12px 15px;border:1px solid #4a3a3c;border-radius:10px;background:#241719;color:#fff;cursor:pointer;font:600 13px system-ui}
+ #pm-ad-fallback.on{display:block}
+ /* Quando o conteúdo começa, converte a mesma instância JW em player normal. */
+ body.pm-content-playing #pm-ad-shell{display:block;background:#000;padding:0;backdrop-filter:none;-webkit-backdrop-filter:none}
+ body.pm-content-playing #pm-ad-dialog{width:100%;height:100%;max-width:none;border:0;border-radius:0;box-shadow:none}
+ body.pm-content-playing #pm-ad-video{width:100%;height:100%;aspect-ratio:auto}
+ body.pm-content-playing #pm-ad-heading,body.pm-content-playing #pm-ad-note,body.pm-content-playing #pm-ad-fallback{display:none!important}
+ body.pm-content-playing #down,body.pm-content-playing #btn_try{z-index:110!important}
+ body.pm-content-playing #pm-back-btn{z-index:110!important}
+ #pm-err{z-index:150!important}
+ @media(max-width:550px){#pm-ad-shell{padding:12px}#pm-ad-dialog{border-radius:14px}#pm-ad-heading{padding:10px 12px}#pm-ad-note{font-size:11px;padding:10px}}
+
  /* 👇 Overlay elegante para erro de reprodução */
  #pm-err{
    position:fixed;inset:0;background:#000;display:none;
@@ -150,7 +170,7 @@ function goBack(){
 </script>
 
 <!-- 👇 Botão Voltar original -->
-<div style=" background:#ff0000; padding:10px 20px; letter-spacing:1px; box-shadow:0 1px 15px #ff0000; color:#fff; font-family:'Open-Sans',sans-serif; margin:8px; border-radius:19px; font-weight:bold; font-size:11px; position:absolute; left:16px; z-index:9; cursor:pointer;" onclick="goBack()">Voltar</div>
+<div id="pm-back-btn" style=" background:#ff0000; padding:10px 20px; letter-spacing:1px; box-shadow:0 1px 15px #ff0000; color:#fff; font-family:'Open-Sans',sans-serif; margin:8px; border-radius:19px; font-weight:bold; font-size:11px; position:absolute; left:16px; z-index:9; cursor:pointer;" onclick="goBack()">Voltar</div>
 
 <!-- 👇 Botão Tentar novamente original -->
 <div id="btn_try" style=" background:#333; padding:10px 20px; letter-spacing:1px; box-shadow:0 1px 15px #333; color:#fff; font-family:'Open-Sans',sans-serif; margin:8px; border-radius:19px; font-weight:bold; font-size:11px; position:absolute; left:100px; z-index:9; display:none; cursor:pointer;" onclick="window.location.reload()">Tentar novamente</div>
@@ -163,7 +183,14 @@ function goBack(){
   </ul>
 </div>
 
-<div id="ani-player"></div>
+<div id="pm-ad-shell" role="dialog" aria-modal="true" aria-label="Publicidade antes do vídeo">
+  <div id="pm-ad-dialog">
+    <div id="pm-ad-heading"><span>PLAYMOZ · Publicidade</span><span>O filme começa após o anúncio</span></div>
+    <div id="pm-ad-video"><div id="ani-player"></div></div>
+    <div id="pm-ad-note">Toca em reproduzir para começar. Podes saltar o anúncio quando essa opção estiver disponível.</div>
+    <button id="pm-ad-fallback" type="button">Continuar para o filme</button>
+  </div>
+</div>
 
 <!-- 👇 Overlay de erro (substitui o 224003 do JW) -->
 <div id="pm-err">
@@ -181,6 +208,21 @@ function goBack(){
 </div>
 
 <script type="text/javascript">
+function pmContentReady(){
+  if (document.body.classList.contains('pm-content-playing')) return;
+  document.body.classList.add('pm-content-playing');
+  document.getElementById('pm-ad-shell').setAttribute('aria-modal','false');
+  try { player.resize('100%', '100%'); } catch(e) {}
+}
+var pmAdActive = false;
+var pmAdAttempted = false;
+function pmAdUnavailable(){
+  pmAdActive = false;
+  // Um erro de publicidade nunca deve deixar o utilizador preso no modal.
+  var btn = document.getElementById('pm-ad-fallback');
+  if(btn) btn.classList.add('on');
+  try { if (player && player.getState && player.getState() === 'playing') pmContentReady(); } catch(e) {}
+}
 function pmShowErr(){
   var el = document.getElementById('pm-err');
   if (el) el.classList.add('on');
@@ -216,9 +258,24 @@ player.setup({
 });
 
 // 👇 Erro do JW → overlay elegante (nunca mostra 224003)
-player.on('error', pmShowErr);
-player.on('mediaError', pmShowErr);
-player.on('play', pmHideErr);
+player.on('error', function(){ pmAdUnavailable(); pmShowErr(); });
+player.on('mediaError', function(){ pmAdUnavailable(); pmShowErr(); });
+player.on('play', function(){
+  pmHideErr();
+  // O evento 'play' é do conteúdo principal, não do anúncio VAST.
+  if (!pmAdActive) pmContentReady();
+});
+player.on('adRequest', function(){ pmAdAttempted = true; });
+player.on('adStarted', function(){ pmAdActive = true; pmAdAttempted = true; });
+player.on('adPlay', function(){ pmAdActive = true; });
+player.on('adComplete', function(){ pmAdActive = false; });
+player.on('adSkipped', function(){ pmAdActive = false; });
+player.on('adError', pmAdUnavailable);
+player.on('adBlock', pmAdUnavailable);
+document.getElementById('pm-ad-fallback').addEventListener('click', function(){
+  pmContentReady();
+  try { player.play(true); } catch(e) {}
+});
 player.on('buffer', pmHideErr);
 
 player.addButton('<svg xmlns="http://www.w3.org/2000/svg" class="jw-svg-icon jw-svg-icon-rewind2" viewBox="0 0 240 240" focusable="false"><path d="m 25.993957,57.778 v 125.3 c 0.03604,2.63589 2.164107,4.76396 4.8,4.8 h 62.7 v -19.3 h -48.2 v -96.4 H 160.99396 v 19.3 c 0,5.3 3.6,7.2 8,4.3 l 41.8,-27.9 c 2.93574,-1.480087 4.13843,-5.04363 2.7,-8 -0.57502,-1.174985 -1.52502,-2.124979 -2.7,-2.7 l -41.8,-27.9 c -4.4,-2.9 -8,-1 -8,4.3 v 19.3 H 30.893957 c -2.689569,0.03972 -4.860275,2.210431 -4.9,4.9 z m 163.422413,73.04577 c -3.72072,-6.30626 -10.38421,-10.29683 -17.7,-10.6 -7.31579,0.30317 -13.97928,4.29374 -17.7,10.6 -8.60009,14.23525 -8.60009,32.06475 0,46.3 3.72072,6.30626 10.38421,10.29683 17.7,10.6 7.31579,-0.30317 13.97928,-4.29374 17.7,-10.6 8.60009,-14.23525 8.60009,-32.06475 0,-46.3 z m -17.7,47.2 c -7.8,0 -14.4,-11 -14.4,-24.1 0,-13.1 6.6,-24.1 14.4,-24.1 7.8,0 14.4,11 14.4,24.1 0,13.1 -6.5,24.1 -14.4,24.1 z m -47.77056,9.72863 v -51 l -4.8,4.8 -6.8,-6.8 13,-12.99999 c 3.02543,-3.03598 8.21053,-0.88605 8.2,3.4 v 62.69999 z"></path></svg>', "Avançar 10s", function () { player.seek(player.getPosition() + 10); }, "Avançar 10s");
@@ -871,18 +928,6 @@ document.addEventListener('keydown', e => {
 
 document.addEventListener('DOMContentLoaded', pmScan);
 </script>
-<script>
-var link = "https://omg10.com/4/10811407";
-var tempo = 120000; // 2 minutos
-var ultimo = 0;
 
-document.addEventListener('click', function() {
-    var agora = Date.now();
-    if (agora - ultimo >= tempo) {
-        window.open(link, '_blank');
-        ultimo = agora;
-    }
-});
-</script>
 </body>
 </html>
