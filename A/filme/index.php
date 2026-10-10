@@ -63,10 +63,8 @@ if (isset($_GET['embed'])) {
 
     if (!preg_match('~^https?://~i', $url)) { http_response_code(502); exit('URL inválido'); }
 
-    // 👇 O player usa o proxy interno para evitar erro 224003
-    $proxyUrl = strtok($_SERVER['REQUEST_URI'] ?? '/', '?') . '?stream=' . $token;
-
-    $urlJs    = json_encode($proxyUrl, JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_UNESCAPED_SLASHES);
+    // Servidor 1: o JW Player recebe o MP4 real directamente, sem proxy PHP.
+    $urlJs    = json_encode($url, JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_UNESCAPED_SLASHES);
     $labelJs  = json_encode($label,    JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT);
     $posterJs = json_encode($poster,   JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_UNESCAPED_SLASHES);
     header('Content-Type: text/html; charset=utf-8');
@@ -157,11 +155,11 @@ function goBack(){
 <!-- 👇 Botão Tentar novamente original -->
 <div id="btn_try" style=" background:#333; padding:10px 20px; letter-spacing:1px; box-shadow:0 1px 15px #333; color:#fff; font-family:'Open-Sans',sans-serif; margin:8px; border-radius:19px; font-weight:bold; font-size:11px; position:absolute; left:100px; z-index:9; display:none; cursor:pointer;" onclick="window.location.reload()">Tentar novamente</div>
 
-<!-- 👇 Botão Espelhar/Baixar original (usa URL cru para download) -->
+<!-- Servidor 1: Espelhar/Baixar abre directamente o MP4 assinado. -->
 <div id="down" style="right:16px;">
   <div class="download">Espelhar/Baixar</div>
   <ul id="down-list" class="down-list">
-    <li><a href="<?= htmlspecialchars($proxyUrl.'&download=1', ENT_QUOTES, 'UTF-8') ?>" target="_blank" rel="noopener">Clique aqui</a></li>
+    <li><a href="<?= htmlspecialchars($url, ENT_QUOTES, 'UTF-8') ?>" target="_blank" rel="noopener noreferrer">Abrir MP4</a></li>
   </ul>
 </div>
 
