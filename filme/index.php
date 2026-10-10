@@ -167,6 +167,26 @@ if (isset($_GET['embed'])) {
    border-color:rgba(255,0,0,.5);
    background:linear-gradient(145deg,#2c1a1c,#1a1012);
  }
+
+/* PlayMoz · interface unificada do anúncio (filme e série) */
+#pm-ad-shell{z-index:1000!important;padding:clamp(12px,3vw,32px)!important;background:radial-gradient(ellipse at 50% 15%,rgba(70,12,22,.23),transparent 64%),rgba(2,3,7,.94)!important;backdrop-filter:blur(18px) saturate(.8)!important;-webkit-backdrop-filter:blur(18px) saturate(.8)!important}
+#pm-ad-dialog{width:min(780px,100%)!important;max-height:calc(100dvh - 24px);border:1px solid rgba(255,255,255,.12)!important;border-radius:20px!important;background:#111216!important;box-shadow:0 30px 110px rgba(0,0,0,.78),0 0 0 1px rgba(255,42,59,.06)!important;overflow:hidden;animation:pmAdEnter .38s cubic-bezier(.2,.85,.2,1) both}
+@keyframes pmAdEnter{from{opacity:0;transform:translateY(14px) scale(.975)}to{opacity:1;transform:none}}
+#pm-ad-heading{padding:17px 20px!important;background:linear-gradient(120deg,#191a20,#111216)!important;border-bottom:1px solid rgba(255,255,255,.09)!important;min-height:52px;box-sizing:border-box;letter-spacing:.01em}
+#pm-ad-heading span:first-child{display:inline-flex;align-items:center;gap:10px;color:#fafafa!important;font-size:13px;font-weight:800;letter-spacing:.055em}
+#pm-ad-heading span:first-child:before{content:'▶';display:grid;place-items:center;width:29px;height:29px;border-radius:9px;background:linear-gradient(135deg,#ff3348,#ba0b22);font-size:12px;color:white;box-shadow:0 4px 15px #ff253c33}
+#pm-ad-heading span:last-child{font-size:11px!important;color:#b9b9c3!important}
+#pm-ad-video{background:#050506!important;aspect-ratio:16/9!important;max-height:calc(100dvh - 185px);min-height:0}
+#pm-ad-note{background:#111216!important;color:#b4b5c1!important;padding:15px 20px 17px!important;font-size:12px!important;line-height:1.6!important;text-align:left!important;border-top:1px solid rgba(255,255,255,.06)}
+#pm-ad-note:before{content:'●';color:#fa3447;font-size:10px;margin-right:8px}
+#pm-ad-fallback{width:calc(100% - 40px);margin:0 20px 18px!important;border:1px solid rgba(255,53,71,.45)!important;background:linear-gradient(135deg,#ad152c,#720b1e)!important;border-radius:12px!important;padding:13px 15px!important;font-weight:750!important;text-align:center}
+#pm-ad-fallback:focus-visible{outline:2px solid #fff;outline-offset:2px}
+body.pm-content-playing #pm-ad-shell{padding:0!important;background:#000!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important}
+body.pm-content-playing #pm-ad-dialog{width:100%!important;max-height:none!important;height:100%!important;border:none!important;border-radius:0!important;box-shadow:none!important;animation:none!important;background:#000!important}
+body.pm-content-playing #pm-ad-video{height:100%!important;max-height:none!important;aspect-ratio:auto!important}
+body.pm-content-playing #pm-ad-heading,body.pm-content-playing #pm-ad-note,body.pm-content-playing #pm-ad-fallback{display:none!important}
+@media(max-width:550px){#pm-ad-shell{padding:12px!important}#pm-ad-dialog{border-radius:15px!important}#pm-ad-heading{padding:12px 13px!important;gap:6px!important}#pm-ad-heading span:first-child{font-size:11px!important;gap:7px}#pm-ad-heading span:first-child:before{width:24px;height:24px}#pm-ad-heading span:last-child{font-size:10px!important;text-align:right}#pm-ad-note{font-size:11px!important;padding:12px 13px!important}#pm-ad-fallback{width:calc(100% - 26px);margin:0 13px 13px!important}}
+@media(prefers-reduced-motion:reduce){#pm-ad-dialog{animation:none!important}}
 </style>
 </head>
 <body>
@@ -200,7 +220,7 @@ function goBack(){
 
 <div id="pm-ad-shell" role="dialog" aria-modal="true" aria-label="Publicidade antes do vídeo">
   <div id="pm-ad-dialog">
-    <div id="pm-ad-heading"><span>PLAYMOZ · Publicidade</span><span>O filme começa após o anúncio</span></div>
+    <div id="pm-ad-heading"><span>PLAYMOZ · Publicidade</span><span>A reproduzir antes do filme</span></div>
     <div id="pm-ad-video"><div id="ani-player"></div></div>
     <div id="pm-ad-note">Toca em reproduzir para começar. Podes saltar o anúncio quando essa opção estiver disponível.</div>
     <button id="pm-ad-fallback" type="button">Continuar para o filme</button>
