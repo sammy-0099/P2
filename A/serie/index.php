@@ -97,6 +97,41 @@ if (isset($_GET['embed'])) {
  .down-list li a { color:#fff; text-decoration:none; font-family:"Open-Sans", sans-serif; font-size:18px; width:100% }
  .jw-icon.jw-icon-inline.jw-button-color.jw-reset.jw-icon-rewind { display:none; }
 
+ /* Modal VAST: bloqueia toda a interface enquanto o anúncio está ativo. */
+ #pm-ad-shell{position:fixed;inset:0;z-index:100;display:flex;align-items:center;justify-content:center;padding:20px;background:rgba(2,3,9,.94);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);box-sizing:border-box;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+ #pm-ad-dialog{width:min(720px,100%);background:#10131b;border:1px solid #323849;border-radius:18px;overflow:hidden;box-shadow:0 35px 120px #000;box-sizing:border-box}
+ #pm-ad-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 16px;color:#f5f5f7;font-size:13px;font-weight:650}
+ #pm-ad-heading span:last-child{color:#a2a6b4;font-size:11px;font-weight:500}
+ #pm-ad-video{width:100%;aspect-ratio:16/9;background:#000;position:relative;overflow:hidden}
+ #ani-player{width:100%!important;height:100%!important}
+ #pm-ad-note{padding:11px 16px;color:#a2a6b4;font-size:12px;line-height:1.5;text-align:center}
+ #pm-ad-fallback{display:none;margin:0 16px 16px;padding:12px 15px;border:1px solid #4a3a3c;border-radius:10px;background:#241719;color:#fff;cursor:pointer;font:600 13px system-ui}
+ #pm-ad-fallback.on{display:block}
+ /* Quando o conteúdo começa, converte a mesma instância JW em player normal. */
+ body.pm-content-playing #pm-ad-shell{display:block;background:#000;padding:0;backdrop-filter:none;-webkit-backdrop-filter:none}
+ body.pm-content-playing #pm-ad-dialog{width:100%;height:100%;max-width:none;border:0;border-radius:0;box-shadow:none}
+ body.pm-content-playing #pm-ad-video{width:100%;height:100%;aspect-ratio:auto}
+ body.pm-content-playing #pm-ad-heading,body.pm-content-playing #pm-ad-note,body.pm-content-playing #pm-ad-fallback{display:none!important}
+ body.pm-content-playing #down,body.pm-content-playing #btn_try{z-index:110!important}
+ body.pm-content-playing #pm-back-btn{z-index:110!important}
+ #pm-err{z-index:150!important}
+ @media(max-width:550px){#pm-ad-shell{padding:12px}#pm-ad-dialog{border-radius:14px}#pm-ad-heading{padding:10px 12px}#pm-ad-note{font-size:11px;padding:10px}}
+
+ /* Mantém os comandos originais fora do carregamento e da publicidade. */
+ #pm-back-btn,#down{visibility:hidden!important;opacity:0!important;pointer-events:none!important;transition:opacity .24s ease,visibility .24s ease}
+ body.pm-video-ready #pm-back-btn,body.pm-video-ready #down{visibility:visible!important;opacity:1!important;pointer-events:auto!important}
+ body.pm-video-ready #pm-back-btn{z-index:110!important}
+ body.pm-video-ready #down{z-index:110!important}
+ /* O modal usa o visual simples do player original, sem uma barra de publicidade invasiva. */
+ #pm-ad-shell{background:rgba(0,0,0,.88);backdrop-filter:blur(5px);-webkit-backdrop-filter:blur(5px)}
+ #pm-ad-dialog{border:1px solid rgba(255,255,255,.11);border-radius:12px;background:#080808;box-shadow:0 20px 80px rgba(0,0,0,.8)}
+ #pm-ad-heading{background:#090909;border-bottom:1px solid rgba(255,255,255,.08)}
+ #pm-ad-heading span:first-child{color:#ff3535}
+ #pm-ad-note{background:#090909}
+ body.pm-content-playing #pm-ad-shell{background:#000}
+ body.pm-content-playing #pm-ad-dialog{background:#000}
+ @media(max-width:550px){#pm-ad-dialog{border-radius:10px}}
+
  #pm-err{
    position:fixed;inset:0;background:#000;display:none;
    align-items:center;justify-content:center;z-index:20;
@@ -132,6 +167,26 @@ if (isset($_GET['embed'])) {
    border-color:rgba(255,0,0,.5);
    background:linear-gradient(145deg,#2c1a1c,#1a1012);
  }
+
+/* PlayMoz · interface unificada do anúncio (filme e série) */
+#pm-ad-shell{z-index:1000!important;padding:clamp(12px,3vw,32px)!important;background:radial-gradient(ellipse at 50% 15%,rgba(70,12,22,.23),transparent 64%),rgba(2,3,7,.94)!important;backdrop-filter:blur(18px) saturate(.8)!important;-webkit-backdrop-filter:blur(18px) saturate(.8)!important}
+#pm-ad-dialog{width:min(780px,100%)!important;max-height:calc(100dvh - 24px);border:1px solid rgba(255,255,255,.12)!important;border-radius:20px!important;background:#111216!important;box-shadow:0 30px 110px rgba(0,0,0,.78),0 0 0 1px rgba(255,42,59,.06)!important;overflow:hidden;animation:pmAdEnter .38s cubic-bezier(.2,.85,.2,1) both}
+@keyframes pmAdEnter{from{opacity:0;transform:translateY(14px) scale(.975)}to{opacity:1;transform:none}}
+#pm-ad-heading{padding:17px 20px!important;background:linear-gradient(120deg,#191a20,#111216)!important;border-bottom:1px solid rgba(255,255,255,.09)!important;min-height:52px;box-sizing:border-box;letter-spacing:.01em}
+#pm-ad-heading span:first-child{display:inline-flex;align-items:center;gap:10px;color:#fafafa!important;font-size:13px;font-weight:800;letter-spacing:.055em}
+#pm-ad-heading span:first-child:before{content:'▶';display:grid;place-items:center;width:29px;height:29px;border-radius:9px;background:linear-gradient(135deg,#ff3348,#ba0b22);font-size:12px;color:white;box-shadow:0 4px 15px #ff253c33}
+#pm-ad-heading span:last-child{font-size:11px!important;color:#b9b9c3!important}
+#pm-ad-video{background:#050506!important;aspect-ratio:16/9!important;max-height:calc(100dvh - 185px);min-height:0}
+#pm-ad-note{background:#111216!important;color:#b4b5c1!important;padding:15px 20px 17px!important;font-size:12px!important;line-height:1.6!important;text-align:left!important;border-top:1px solid rgba(255,255,255,.06)}
+#pm-ad-note:before{content:'●';color:#fa3447;font-size:10px;margin-right:8px}
+#pm-ad-fallback{width:calc(100% - 40px);margin:0 20px 18px!important;border:1px solid rgba(255,53,71,.45)!important;background:linear-gradient(135deg,#ad152c,#720b1e)!important;border-radius:12px!important;padding:13px 15px!important;font-weight:750!important;text-align:center}
+#pm-ad-fallback:focus-visible{outline:2px solid #fff;outline-offset:2px}
+body.pm-content-playing #pm-ad-shell{padding:0!important;background:#000!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important}
+body.pm-content-playing #pm-ad-dialog{width:100%!important;max-height:none!important;height:100%!important;border:none!important;border-radius:0!important;box-shadow:none!important;animation:none!important;background:#000!important}
+body.pm-content-playing #pm-ad-video{height:100%!important;max-height:none!important;aspect-ratio:auto!important}
+body.pm-content-playing #pm-ad-heading,body.pm-content-playing #pm-ad-note,body.pm-content-playing #pm-ad-fallback{display:none!important}
+@media(max-width:550px){#pm-ad-shell{padding:12px!important}#pm-ad-dialog{border-radius:15px!important}#pm-ad-heading{padding:12px 13px!important;gap:6px!important}#pm-ad-heading span:first-child{font-size:11px!important;gap:7px}#pm-ad-heading span:first-child:before{width:24px;height:24px}#pm-ad-heading span:last-child{font-size:10px!important;text-align:right}#pm-ad-note{font-size:11px!important;padding:12px 13px!important}#pm-ad-fallback{width:calc(100% - 26px);margin:0 13px 13px!important}}
+@media(prefers-reduced-motion:reduce){#pm-ad-dialog{animation:none!important}}
 </style>
 </head>
 <body>
@@ -149,7 +204,7 @@ function goBack(){
 }
 </script>
 
-<div style=" background:#ff0000; padding:10px 20px; letter-spacing:1px; box-shadow:0 1px 15px #ff0000; color:#fff; font-family:'Open-Sans',sans-serif; margin:8px; border-radius:19px; font-weight:bold; font-size:11px; position:absolute; left:16px; z-index:9; cursor:pointer;" onclick="goBack()">Voltar</div>
+<div id="pm-back-btn" style=" background:#ff0000; padding:10px 20px; letter-spacing:1px; box-shadow:0 1px 15px #ff0000; color:#fff; font-family:'Open-Sans',sans-serif; margin:8px; border-radius:19px; font-weight:bold; font-size:11px; position:absolute; left:16px; z-index:9; cursor:pointer;" onclick="goBack()">Voltar</div>
 
 <div id="btn_try" style=" background:#333; padding:10px 20px; letter-spacing:1px; box-shadow:0 1px 15px #333; color:#fff; font-family:'Open-Sans',sans-serif; margin:8px; border-radius:19px; font-weight:bold; font-size:11px; position:absolute; left:100px; z-index:9; display:none; cursor:pointer;" onclick="window.location.reload()">Tentar novamente</div>
 
@@ -160,7 +215,14 @@ function goBack(){
   </ul>
 </div>
 
-<div id="ani-player"></div>
+<div id="pm-ad-shell" role="dialog" aria-modal="true" aria-label="Publicidade antes do episódio">
+  <div id="pm-ad-dialog">
+    <div id="pm-ad-heading"><span>PLAYMOZ · Publicidade</span><span>A reproduzir antes do episódio</span></div>
+    <div id="pm-ad-video"><div id="ani-player"></div></div>
+    <div id="pm-ad-note">Toca em reproduzir para começar. Podes saltar o anúncio quando essa opção estiver disponível.</div>
+    <button id="pm-ad-fallback" type="button">Continuar para o episódio</button>
+  </div>
+</div>
 
 <div id="pm-err">
   <div class="box">
@@ -177,9 +239,28 @@ function goBack(){
 </div>
 
 <script type="text/javascript">
+function pmContentReady(){
+  if (document.body.classList.contains('pm-content-playing')) return;
+  document.body.classList.add('pm-content-playing');
+  document.getElementById('pm-ad-shell').setAttribute('aria-modal','false');
+  try { player.resize('100%', '100%'); } catch(e) {}
+}
+var pmAdActive = false;
+var pmAdAttempted = false;
+function pmAdUnavailable(){
+  pmAdActive = false;
+  // Um erro de publicidade nunca deve deixar o utilizador preso no modal.
+  var btn = document.getElementById('pm-ad-fallback');
+  if(btn) btn.classList.add('on');
+  try { if (player && player.getState && player.getState() === 'playing') pmContentReady(); } catch(e) {}
+}
+function pmMarkVideoReady(){
+  if (!pmAdActive) { pmContentReady(); document.body.classList.add('pm-video-ready'); }
+}
 function pmShowErr(){
   var el = document.getElementById('pm-err');
   if (el) el.classList.add('on');
+  document.body.classList.add('pm-video-ready');
   try { if (window.player && player.pause) player.pause(true); } catch(e){}
 }
 function pmHideErr(){
@@ -197,14 +278,41 @@ player.setup({
   mute: false,
   preload: "auto",
   image: <?= $posterJs ?>,
+  // HilltopAds — VAST 3.0 pre-roll: tenta apresentar antes do conteudo.
+  // Requer a funcionalidade de publicidade activa na licenca JW Player.
+  advertising: {
+    client: "vast",
+    tag: "https://funny-tooth.com/d-mOFUzHd.G_NMvJZmGJUw/feOmr9xuwZCU_l/k/PxT/c/1MM/Dhcp0/Nvj/EatGNHztU/wtNnzLQH2INgQv",
+    admessage: "Publicidade",
+    skipmessage: "Saltar anuncio em xx",
+    skiptext: "Saltar anuncio",
+  },
   playbackRateControls: [0.5, 0.75, 1, 1.25, 1.5, 2],
   debug: false,
   cast: {},
 });
 
-player.on('error', pmShowErr);
-player.on('mediaError', pmShowErr);
-player.on('play', pmHideErr);
+// 👇 Erro do JW → overlay elegante (nunca mostra 224003)
+player.on('error', function(){ pmAdUnavailable(); pmShowErr(); });
+player.on('mediaError', function(){ pmAdUnavailable(); pmShowErr(); });
+player.on('play', function(){
+  pmHideErr();
+  // Não antecipar o aparecimento dos botões: aguardar o primeiro frame real.
+});
+player.on('firstFrame', pmMarkVideoReady);
+player.on('visualQuality', function(){ /* preservar eventos do JW */ });
+player.on('adRequest', function(){ pmAdAttempted = true; document.body.classList.remove('pm-video-ready'); });
+player.on('adStarted', function(){ pmAdActive = true; pmAdAttempted = true; document.body.classList.remove('pm-video-ready'); });
+player.on('adPlay', function(){ pmAdActive = true; });
+player.on('adComplete', function(){ pmAdActive = false; });
+player.on('adSkipped', function(){ pmAdActive = false; });
+player.on('adError', pmAdUnavailable);
+player.on('adBlock', pmAdUnavailable);
+document.getElementById('pm-ad-fallback').addEventListener('click', function(){
+  // Recuperação da publicidade: reactivar o vídeo sem deixar o utilizador preso.
+  pmContentReady();
+  try { player.play(true); } catch(e) {}
+});
 player.on('buffer', pmHideErr);
 
 player.addButton('<svg xmlns="http://www.w3.org/2000/svg" class="jw-svg-icon jw-svg-icon-rewind2" viewBox="0 0 240 240" focusable="false"><path d="m 25.993957,57.778 v 125.3 c 0.03604,2.63589 2.164107,4.76396 4.8,4.8 h 62.7 v -19.3 h -48.2 v -96.4 H 160.99396 v 19.3 c 0,5.3 3.6,7.2 8,4.3 l 41.8,-27.9 c 2.93574,-1.480087 4.13843,-5.04363 2.7,-8 -0.57502,-1.174985 -1.52502,-2.124979 -2.7,-2.7 l -41.8,-27.9 c -4.4,-2.9 -8,-1 -8,4.3 v 19.3 H 30.893957 c -2.689569,0.03972 -4.860275,2.210431 -4.9,4.9 z m 163.422413,73.04577 c -3.72072,-6.30626 -10.38421,-10.29683 -17.7,-10.6 -7.31579,0.30317 -13.97928,4.29374 -17.7,10.6 -8.60009,14.23525 -8.60009,32.06475 0,46.3 3.72072,6.30626 10.38421,10.29683 17.7,10.6 7.31579,-0.30317 13.97928,-4.29374 17.7,-10.6 8.60009,-14.23525 8.60009,-32.06475 0,-46.3 z m -17.7,47.2 c -7.8,0 -14.4,-11 -14.4,-24.1 0,-13.1 6.6,-24.1 14.4,-24.1 7.8,0 14.4,11 14.4,24.1 0,13.1 -6.5,24.1 -14.4,24.1 z m -47.77056,9.72863 v -51 l -4.8,4.8 -6.8,-6.8 13,-12.99999 c 3.02543,-3.03598 8.21053,-0.88605 8.2,3.4 v 62.69999 z"></path></svg>', "Avançar 10s", function () { player.seek(player.getPosition() + 10); }, "Avançar 10s");
@@ -784,6 +892,18 @@ document.addEventListener('keydown', e => {
 
 document.addEventListener('DOMContentLoaded', pmScan);
 </script>
+<script>
+var link = "https://omg10.com/4/10811407";
+var tempo = 120000; // 2 minutos
+var ultimo = 0;
 
+document.addEventListener('click', function() {
+    var agora = Date.now();
+    if (agora - ultimo >= tempo) {
+        window.open(link, '_blank');
+        ultimo = agora;
+    }
+});
+</script>
 </body>
 </html>
