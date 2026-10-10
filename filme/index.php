@@ -116,6 +116,21 @@ if (isset($_GET['embed'])) {
  #pm-err{z-index:150!important}
  @media(max-width:550px){#pm-ad-shell{padding:12px}#pm-ad-dialog{border-radius:14px}#pm-ad-heading{padding:10px 12px}#pm-ad-note{font-size:11px;padding:10px}}
 
+ /* Mantém os comandos originais fora do carregamento e da publicidade. */
+ #pm-back-btn,#down{visibility:hidden!important;opacity:0!important;pointer-events:none!important;transition:opacity .24s ease,visibility .24s ease}
+ body.pm-video-ready #pm-back-btn,body.pm-video-ready #down{visibility:visible!important;opacity:1!important;pointer-events:auto!important}
+ body.pm-video-ready #pm-back-btn{z-index:110!important}
+ body.pm-video-ready #down{z-index:110!important}
+ /* O modal usa o visual simples do player original, sem uma barra de publicidade invasiva. */
+ #pm-ad-shell{background:rgba(0,0,0,.88);backdrop-filter:blur(5px);-webkit-backdrop-filter:blur(5px)}
+ #pm-ad-dialog{border:1px solid rgba(255,255,255,.11);border-radius:12px;background:#080808;box-shadow:0 20px 80px rgba(0,0,0,.8)}
+ #pm-ad-heading{background:#090909;border-bottom:1px solid rgba(255,255,255,.08)}
+ #pm-ad-heading span:first-child{color:#ff3535}
+ #pm-ad-note{background:#090909}
+ body.pm-content-playing #pm-ad-shell{background:#000}
+ body.pm-content-playing #pm-ad-dialog{background:#000}
+ @media(max-width:550px){#pm-ad-dialog{border-radius:10px}}
+
  /* 👇 Overlay elegante para erro de reprodução */
  #pm-err{
    position:fixed;inset:0;background:#000;display:none;
@@ -223,9 +238,13 @@ function pmAdUnavailable(){
   if(btn) btn.classList.add('on');
   try { if (player && player.getState && player.getState() === 'playing') pmContentReady(); } catch(e) {}
 }
+function pmMarkVideoReady(){
+  if (!pmAdActive) { pmContentReady(); document.body.classList.add('pm-video-ready'); }
+}
 function pmShowErr(){
   var el = document.getElementById('pm-err');
   if (el) el.classList.add('on');
+  document.body.classList.add('pm-video-ready');
   try { if (window.player && player.pause) player.pause(true); } catch(e){}
 }
 function pmHideErr(){
@@ -262,17 +281,19 @@ player.on('error', function(){ pmAdUnavailable(); pmShowErr(); });
 player.on('mediaError', function(){ pmAdUnavailable(); pmShowErr(); });
 player.on('play', function(){
   pmHideErr();
-  // O evento 'play' é do conteúdo principal, não do anúncio VAST.
-  if (!pmAdActive) pmContentReady();
+  // Não antecipar o aparecimento dos botões: aguardar o primeiro frame real.
 });
-player.on('adRequest', function(){ pmAdAttempted = true; });
-player.on('adStarted', function(){ pmAdActive = true; pmAdAttempted = true; });
+player.on('firstFrame', pmMarkVideoReady);
+player.on('visualQuality', function(){ /* preservar eventos do JW */ });
+player.on('adRequest', function(){ pmAdAttempted = true; document.body.classList.remove('pm-video-ready'); });
+player.on('adStarted', function(){ pmAdActive = true; pmAdAttempted = true; document.body.classList.remove('pm-video-ready'); });
 player.on('adPlay', function(){ pmAdActive = true; });
 player.on('adComplete', function(){ pmAdActive = false; });
 player.on('adSkipped', function(){ pmAdActive = false; });
 player.on('adError', pmAdUnavailable);
 player.on('adBlock', pmAdUnavailable);
 document.getElementById('pm-ad-fallback').addEventListener('click', function(){
+  // Recuperação da publicidade: reactivar o vídeo sem deixar o utilizador preso.
   pmContentReady();
   try { player.play(true); } catch(e) {}
 });
