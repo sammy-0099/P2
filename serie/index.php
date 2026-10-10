@@ -62,9 +62,7 @@ if (isset($_GET['embed'])) {
 
     if (!preg_match('~^https?://~i', $url)) { http_response_code(502); exit('URL inválido'); }
 
-    $proxyUrl = SITE_BASE . strtok($_SERVER['REQUEST_URI'] ?? '/', '?') . '?stream=' . $token;
-
-    $urlJs    = json_encode($proxyUrl, JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_UNESCAPED_SLASHES);
+    $urlJs    = json_encode($url, JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_UNESCAPED_SLASHES);
     $rawJs    = json_encode($url,      JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_UNESCAPED_SLASHES);
     $labelJs  = json_encode($label,    JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT);
     $posterJs = json_encode($poster,   JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_UNESCAPED_SLASHES);
@@ -291,6 +289,23 @@ body.pm-content-playing.pm-video-ready #down>.down-list a{font-size:13px!importa
 @media(max-width:600px){.pm-ad-brand-icon{flex-basis:31px;width:31px;height:31px;border-radius:9px}.pm-ad-brand-icon svg{width:17px;height:17px}#pm-ad-heading .pm-ad-brand-copy strong{font-size:12px}#pm-ad-heading .pm-ad-brand-copy small{font-size:10px}#pm-ad-heading .pm-ad-status{font-size:10px!important;white-space:normal;text-align:right;line-height:1.25}#pm-ad-heading .pm-ad-status svg{width:14px;height:14px}#pm-ad-note{line-height:1.35!important;font-size:11px!important}body.pm-content-playing.pm-video-ready #down{right:calc(8px + env(safe-area-inset-right,0px))!important}body.pm-content-playing.pm-video-ready #down>.download{padding:9px 10px!important;font-size:10px!important}}
 @media(max-height:440px) and (orientation:landscape){.pm-ad-brand-icon{flex-basis:26px;width:26px;height:26px}.pm-ad-brand-icon svg{width:14px;height:14px}#pm-ad-heading .pm-ad-brand-copy small{display:none}#pm-ad-note svg{width:14px;height:14px}}
 
+
+/* Cabecalho do modal: agrupamento centrado e simetrico. */
+body:not(.pm-content-playing) #pm-ad-heading{
+  display:flex!important;flex-direction:column!important;justify-content:center!important;
+  align-items:center!important;text-align:center!important;gap:6px!important;
+  padding:12px 14px!important;min-height:75px!important;
+}
+body:not(.pm-content-playing) #pm-ad-heading .pm-ad-brand{
+  justify-content:center!important;text-align:left!important;
+}
+body:not(.pm-content-playing) #pm-ad-heading .pm-ad-status{
+  justify-content:center!important;text-align:center!important;
+}
+@media(max-width:600px){
+ body:not(.pm-content-playing) #pm-ad-heading{min-height:70px!important;padding:9px 10px!important;gap:5px!important}
+}
+
 </style>
 </head>
 <body>
@@ -437,9 +452,32 @@ document.getElementById('pm-ad-fallback').addEventListener('click', function(){
 });
 player.on('buffer', pmHideErr);
 
-player.addButton('<svg xmlns="http://www.w3.org/2000/svg" class="jw-svg-icon jw-svg-icon-rewind2" viewBox="0 0 240 240" focusable="false"><path d="m 25.993957,57.778 v 125.3 c 0.03604,2.63589 2.164107,4.76396 4.8,4.8 h 62.7 v -19.3 h -48.2 v -96.4 H 160.99396 v 19.3 c 0,5.3 3.6,7.2 8,4.3 l 41.8,-27.9 c 2.93574,-1.480087 4.13843,-5.04363 2.7,-8 -0.57502,-1.174985 -1.52502,-2.124979 -2.7,-2.7 l -41.8,-27.9 c -4.4,-2.9 -8,-1 -8,4.3 v 19.3 H 30.893957 c -2.689569,0.03972 -4.860275,2.210431 -4.9,4.9 z m 163.422413,73.04577 c -3.72072,-6.30626 -10.38421,-10.29683 -17.7,-10.6 -7.31579,0.30317 -13.97928,4.29374 -17.7,10.6 -8.60009,14.23525 -8.60009,32.06475 0,46.3 3.72072,6.30626 10.38421,10.29683 17.7,10.6 7.31579,-0.30317 13.97928,-4.29374 17.7,-10.6 8.60009,-14.23525 8.60009,-32.06475 0,-46.3 z m -17.7,47.2 c -7.8,0 -14.4,-11 -14.4,-24.1 0,-13.1 6.6,-24.1 14.4,-24.1 7.8,0 14.4,11 14.4,24.1 0,13.1 -6.5,24.1 -14.4,24.1 z m -47.77056,9.72863 v -51 l -4.8,4.8 -6.8,-6.8 13,-12.99999 c 3.02543,-3.03598 8.21053,-0.88605 8.2,3.4 v 62.69999 z"></path></svg>', "Avançar 10s", function () { player.seek(player.getPosition() + 10); }, "Avançar 10s");
 
-player.addButton('<svg xmlns="http://www.w3.org/2000/svg" class="jw-svg-icon jw-svg-icon-rewind" viewBox="0 0 240 240" focusable="false"><path d="M113.2,131.078a21.589,21.589,0,0,0-17.7-10.6,21.589,21.589,0,0,0-17.7,10.6,44.769,44.769,0,0,0,0,46.3,21.589,21.589,0,0,0,17.7,10.6,21.589,21.589,0,0,0,17.7-10.6,44.769,44.769,0,0,0,0-46.3Zm-17.7,47.2c-7.8,0-14.4-11-14.4-24.1s6.6-24.1,14.4-24.1,14.4,11,14.4,24.1S103.4,178.278,95.5,178.278Zm-43.4,9.7v-51l-4.8,4.8-6.8-6.8,13-13a4.8,4.8,0,0,1,8.2,3.4v62.7l-9.6-.1Zm162-130.2v125.3a4.867,4.867,0,0,1-4.8,4.8H146.6v-19.3h48.2v-96.4H79.1v19.3c0,5.3-3.6,7.2-8,4.3l-41.8-27.9a6.013,6.013,0,0,1-2.7-8,5.887,5.887,0,0,1,2.7-2.7l41.8-27.9c4.4-2.9,8-1,8,4.3v19.3H209.2A4.974,4.974,0,0,1,214.1,57.778Z"></path></svg>', "Voltar 10s", function () { player.seek(player.getPosition() - 10); }, "Voltar 10s");
+/* Procurar na fonte MP4 directa: funciona com Range e sem reiniciar a reproducao.
+   Usa o elemento HTML5 caso o controlo seek da biblioteca nao esteja pronto. */
+function pmSeekSeconds(offset) {
+  if (pmAdActive || !document.body.classList.contains('pm-content-playing')) return;
+  try {
+    var media = document.querySelector('#ani-player video');
+    var position = media && Number.isFinite(media.currentTime) ? media.currentTime : Number(player.getPosition());
+    var duration = media && Number.isFinite(media.duration) ? media.duration : Number(player.getDuration());
+    if (!Number.isFinite(position)) return;
+    var target = Math.max(0, position + offset);
+    if (Number.isFinite(duration) && duration > 0) target = Math.min(target, Math.max(0, duration - 0.1));
+    if (media && media.seekable && media.seekable.length) {
+      var first = media.seekable.start(0), last = media.seekable.end(media.seekable.length - 1);
+      target = Math.min(Math.max(target, first), last);
+    }
+    if (media && media.readyState >= 1) media.currentTime = target;
+    else player.seek(target);
+  } catch (e) {
+    try { player.seek(Math.max(0, player.getPosition() + offset)); } catch (_) {}
+  }
+}
+
+player.addButton('<svg xmlns="http://www.w3.org/2000/svg" class="jw-svg-icon jw-svg-icon-rewind2" viewBox="0 0 240 240" focusable="false"><path d="m 25.993957,57.778 v 125.3 c 0.03604,2.63589 2.164107,4.76396 4.8,4.8 h 62.7 v -19.3 h -48.2 v -96.4 H 160.99396 v 19.3 c 0,5.3 3.6,7.2 8,4.3 l 41.8,-27.9 c 2.93574,-1.480087 4.13843,-5.04363 2.7,-8 -0.57502,-1.174985 -1.52502,-2.124979 -2.7,-2.7 l -41.8,-27.9 c -4.4,-2.9 -8,-1 -8,4.3 v 19.3 H 30.893957 c -2.689569,0.03972 -4.860275,2.210431 -4.9,4.9 z m 163.422413,73.04577 c -3.72072,-6.30626 -10.38421,-10.29683 -17.7,-10.6 -7.31579,0.30317 -13.97928,4.29374 -17.7,10.6 -8.60009,14.23525 -8.60009,32.06475 0,46.3 3.72072,6.30626 10.38421,10.29683 17.7,10.6 7.31579,-0.30317 13.97928,-4.29374 17.7,-10.6 8.60009,-14.23525 8.60009,-32.06475 0,-46.3 z m -17.7,47.2 c -7.8,0 -14.4,-11 -14.4,-24.1 0,-13.1 6.6,-24.1 14.4,-24.1 7.8,0 14.4,11 14.4,24.1 0,13.1 -6.5,24.1 -14.4,24.1 z m -47.77056,9.72863 v -51 l -4.8,4.8 -6.8,-6.8 13,-12.99999 c 3.02543,-3.03598 8.21053,-0.88605 8.2,3.4 v 62.69999 z"></path></svg>', "Avançar 10s", function () { pmSeekSeconds(10); }, "Avançar 10s");
+
+player.addButton('<svg xmlns="http://www.w3.org/2000/svg" class="jw-svg-icon jw-svg-icon-rewind" viewBox="0 0 240 240" focusable="false"><path d="M113.2,131.078a21.589,21.589,0,0,0-17.7-10.6,21.589,21.589,0,0,0-17.7,10.6,44.769,44.769,0,0,0,0,46.3,21.589,21.589,0,0,0,17.7,10.6,21.589,21.589,0,0,0,17.7-10.6,44.769,44.769,0,0,0,0-46.3Zm-17.7,47.2c-7.8,0-14.4-11-14.4-24.1s6.6-24.1,14.4-24.1,14.4,11,14.4,24.1S103.4,178.278,95.5,178.278Zm-43.4,9.7v-51l-4.8,4.8-6.8-6.8,13-13a4.8,4.8,0,0,1,8.2,3.4v62.7l-9.6-.1Zm162-130.2v125.3a4.867,4.867,0,0,1-4.8,4.8H146.6v-19.3h48.2v-96.4H79.1v19.3c0,5.3-3.6,7.2-8,4.3l-41.8-27.9a6.013,6.013,0,0,1-2.7-8,5.887,5.887,0,0,1,2.7-2.7l41.8-27.9c4.4-2.9,8-1,8,4.3v19.3H209.2A4.974,4.974,0,0,1,214.1,57.778Z"></path></svg>', "Voltar 10s", function () { pmSeekSeconds(-10); }, "Voltar 10s");
 </script>
 
 </body>
