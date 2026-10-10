@@ -77,7 +77,7 @@ if (isset($_GET['embed'])) {
 <head>
 <meta charset="utf-8">
 <meta name="robots" content="noindex, nofollow">
-<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<meta content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" name="viewport"/>
 <title>PlayMoz Player</title>
 <script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.3.1/jquery.min.js"></script>
 <script type="text/javascript" src="https://ssl.p.jwpcdn.com/player/v/8.6.2/jwplayer.js"></script>
@@ -260,9 +260,53 @@ body.pm-content-playing #pm-ad-shell:before{display:none}
  body:not(.pm-content-playing) #pm-ad-note{min-height:28px!important;padding:5px 12px!important}
 }
 
+
+/* PLAYMOZ VAST PREMIUM: tipografia, SVG, alinhamento e player sem zoom */
+html,body{overscroll-behavior:none;-webkit-text-size-adjust:100%;text-size-adjust:100%}
+#pm-ad-shell,#pm-ad-dialog,#pm-ad-video,#ani-player{touch-action:manipulation}
+body:not(.pm-content-playing) #pm-ad-dialog{font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",Arial,sans-serif!important}
+body:not(.pm-content-playing) #pm-ad-heading{display:flex!important;align-items:center!important;justify-content:space-between!important;gap:12px!important}
+#pm-ad-heading .pm-ad-brand{display:flex!important;align-items:center;gap:11px;color:#fff!important;min-width:0;letter-spacing:0!important}
+#pm-ad-heading .pm-ad-brand::before{content:none!important;display:none!important}
+.pm-ad-brand-icon{flex:0 0 36px;width:36px;height:36px;display:grid;place-items:center;color:#fff;border-radius:11px;background:linear-gradient(135deg,#ff3d50,#c80829);box-shadow:0 5px 18px rgba(255,25,59,.22)}
+.pm-ad-brand-icon svg{width:20px;height:20px}
+.pm-ad-brand-copy{display:flex;flex-direction:column;gap:2px;min-width:0}
+#pm-ad-heading .pm-ad-brand-copy strong{font-size:clamp(13px,1.2vw,16px);font-weight:850;letter-spacing:-.035em;line-height:1.15;color:#fff}
+#pm-ad-heading .pm-ad-brand-copy small{font-size:11px;font-weight:570;letter-spacing:.015em;line-height:1.25;color:#b7bac5}
+#pm-ad-heading .pm-ad-status{display:inline-flex!important;align-items:center;gap:7px;color:#e2e3e9!important;font-weight:750!important;font-size:clamp(10px,.95vw,12px)!important;letter-spacing:0!important;white-space:nowrap}
+.pm-ad-status svg{width:15px;height:15px;color:#ff455b;flex:none}
+#pm-ad-note{display:flex;align-items:center;gap:10px!important;letter-spacing:0!important;font-weight:550!important}
+#pm-ad-note::before{content:none!important;display:none!important}
+#pm-ad-note svg{width:18px;height:18px;flex:none;color:#ff5065}
+#pm-ad-note span{flex:1}
+#pm-ad-fallback{display:none;align-items:center;justify-content:center;gap:9px;font-family:Inter,ui-sans-serif,system-ui,sans-serif!important;font-weight:800!important;letter-spacing:-.01em}
+#pm-ad-fallback.on{display:flex!important}
+#pm-ad-fallback svg{width:18px;height:18px}
+/* Comando Espelhar/Baixar centralizado (filmes e séries) */
+body.pm-content-playing.pm-video-ready #down{box-sizing:border-box!important;margin:0!important;display:flex!important;align-items:center!important;justify-content:center!important;right:calc(12px + env(safe-area-inset-right,0px))!important;left:auto!important;top:calc(12px + env(safe-area-inset-top,0px))!important}
+body.pm-content-playing.pm-video-ready #down>.download{box-sizing:border-box!important;display:inline-flex!important;align-items:center!important;justify-content:center!important;min-height:37px!important;margin:0!important;padding:9px 14px!important;line-height:1.2!important;text-align:center!important;white-space:nowrap;letter-spacing:.015em!important}
+body.pm-content-playing.pm-video-ready #down>.down-list{box-sizing:border-box!important;top:calc(100% + 8px)!important;left:auto!important;right:0!important;margin:0!important;padding:5px!important;min-width:160px!important;width:max-content!important;max-width:calc(100vw - 20px)!important;border-radius:14px!important}
+body.pm-content-playing.pm-video-ready #down>.down-list li{float:none!important;width:100%!important;box-sizing:border-box!important;margin:0!important;padding:8px 10px!important}
+body.pm-content-playing.pm-video-ready #down>.down-list a{font-size:13px!important;font-weight:700!important}
+@media(max-width:600px){.pm-ad-brand-icon{flex-basis:31px;width:31px;height:31px;border-radius:9px}.pm-ad-brand-icon svg{width:17px;height:17px}#pm-ad-heading .pm-ad-brand-copy strong{font-size:12px}#pm-ad-heading .pm-ad-brand-copy small{font-size:10px}#pm-ad-heading .pm-ad-status{font-size:10px!important;white-space:normal;text-align:right;line-height:1.25}#pm-ad-heading .pm-ad-status svg{width:14px;height:14px}#pm-ad-note{line-height:1.35!important;font-size:11px!important}body.pm-content-playing.pm-video-ready #down{right:calc(8px + env(safe-area-inset-right,0px))!important}body.pm-content-playing.pm-video-ready #down>.download{padding:9px 10px!important;font-size:10px!important}}
+@media(max-height:440px) and (orientation:landscape){.pm-ad-brand-icon{flex-basis:26px;width:26px;height:26px}.pm-ad-brand-icon svg{width:14px;height:14px}#pm-ad-heading .pm-ad-brand-copy small{display:none}#pm-ad-note svg{width:14px;height:14px}}
+
 </style>
 </head>
 <body>
+<script>
+/* Impede ampliacao por pinça, duplo toque e atalhos enquanto este player está aberto. */
+(function(){
+  var lastTouchEnd=0;
+  document.addEventListener('gesturestart',function(e){e.preventDefault()},{passive:false});
+  document.addEventListener('gesturechange',function(e){e.preventDefault()},{passive:false});
+  document.addEventListener('touchmove',function(e){if(e.touches.length>1)e.preventDefault()},{passive:false});
+  document.addEventListener('touchend',function(e){var now=Date.now();if(now-lastTouchEnd<280 && e.changedTouches.length===1)e.preventDefault();lastTouchEnd=now},{passive:false});
+  document.addEventListener('wheel',function(e){if(e.ctrlKey)e.preventDefault()},{passive:false});
+  document.addEventListener('keydown',function(e){if((e.ctrlKey||e.metaKey)&&['+','-','=','0'].includes(e.key))e.preventDefault()});
+})();
+</script>
+
 <script>
 function goBack(){
   try{
@@ -290,10 +334,10 @@ function goBack(){
 
 <div id="pm-ad-shell" role="dialog" aria-modal="true" aria-label="Publicidade antes do episódio">
   <div id="pm-ad-dialog">
-    <div id="pm-ad-heading"><span>PLAYMOZ · Publicidade</span><span>A reproduzir antes do episódio</span></div>
+    <div id="pm-ad-heading"><div class="pm-ad-brand"><span class="pm-ad-brand-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 6 10 6-10 6V6Z"/></svg></span><span class="pm-ad-brand-copy"><strong>PlayMoz</strong><small>Uma breve publicidade</small></span></div><span class="pm-ad-status"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/><path d="m9 12 2 2 4-4"/></svg><span>O vídeo começa a seguir</span></span></div>
     <div id="pm-ad-video"><div id="ani-player"></div></div>
-    <div id="pm-ad-note">Toca em reproduzir para começar. Podes saltar o anúncio quando essa opção estiver disponível.</div>
-    <button id="pm-ad-fallback" type="button">Continuar para o episódio</button>
+    <div id="pm-ad-note"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg><span>Para continuar, vê o anúncio. Podes ignorá-lo quando aparecer a opção.</span></div>
+    <button id="pm-ad-fallback" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 6 8 6-8 6V6Zm10 0v12"/><path d="M20 6v12"/></svg><span>Ver episódio</span></button>
   </div>
 </div>
 
@@ -652,7 +696,7 @@ $base=SITE_BASE.$self.'?'.http_build_query($params);
 <html lang="pt-BR">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <meta name="referrer" content="no-referrer">
 <meta name="robots" content="noindex,nofollow">
 <title>PlayMoz · Player</title>
