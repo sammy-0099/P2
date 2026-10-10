@@ -452,51 +452,21 @@ player.addButton('<svg xmlns="http://www.w3.org/2000/svg" class="jw-svg-icon jw-
 if (isset($_GET['stream'])) {
     $token = (string)$_GET['stream'];
     $entry = pm_store_get($token);
-    if (!is_array($entry)) {
-        http_response_code(404); exit('Fonte indisponível');
-    }
+    if (!is_array($entry)) { http_response_code(404); exit('Fonte indisponível'); }
     $url = $entry['url'];
     if (!function_exists('curl_init') || !preg_match('~^https?://~i', $url)) {
         http_response_code(502); exit;
     }
-    $range = $_SERVER['HTTP_RANGE'] ?? '';
-    if ($range !== '' && !preg_match('/^bytes=\d*-\d*$/', $range)) {
+    $range = trim($_SERVER['HTTP_RANGE'] ?? '');
+    if ($range !== '' && !preg_match('/^bytes=(?:\d+-\d*|-\d+)$/', $range)) {
         http_response_code(416); exit;
-    }
-
-    $headCh = curl_init($url);
-    curl_setopt_array($headCh, [
-        CURLOPT_NOBODY => true,
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_FOLLOWLOCATION => true,
-        CURLOPT_MAXREDIRS => 3,
-        CURLOPT_CONNECTTIMEOUT => 5,
-        CURLOPT_TIMEOUT => 8,
-        CURLOPT_USERAGENT => 'Mozilla/5.0',
-        CURLOPT_SSL_VERIFYPEER => true,
-    ]);
-    curl_exec($headCh);
-    $remoteCtype = (string)curl_getinfo($headCh, CURLINFO_CONTENT_TYPE);
-    $remoteLen   = (int)curl_getinfo($headCh, CURLINFO_CONTENT_LENGTH_DOWNLOAD);
-    curl_close($headCh);
-
-    if (stripos($remoteCtype, 'video/') === 0) {
-        $ctype = $remoteCtype;
-    } elseif (stripos($remoteCtype, 'mpegurl') !== false || stripos($remoteCtype, 'm3u8') !== false) {
-        $ctype = 'application/vnd.apple.mpegurl';
-    } else {
-        $ctype = 'video/mp4';
-    }
-
-    if ($range === '') {
-        header('Content-Type: ' . $ctype);
-        header('Accept-Ranges: bytes');
-        if ($remoteLen > 0) header('Content-Length: ' . $remoteLen);
     }
     header('Cache-Control: private, no-store');
     header('X-Content-Type-Options: nosniff');
     header('Access-Control-Allow-Origin: *');
-
+    header('Access-Control-Expose-Headers: Content-Length, Content-Range, Accept-Ranges');
+    // A origem precisa de honrar Range. Caso contrário, um seek regressaria ao início.
+    $response = ['status'=>0, 'headers'=>[], 'ready'=>false, 'send'=>false];
     $ch = curl_init($url);
     curl_setopt_array($ch, [
         CURLOPT_FOLLOWLOCATION => true,
@@ -504,34 +474,56 @@ if (isset($_GET['stream'])) {
         CURLOPT_CONNECTTIMEOUT => 8,
         CURLOPT_TIMEOUT => 0,
         CURLOPT_RETURNTRANSFER => false,
+        CURLOPT_BUFFERSIZE => 65536,
         CURLOPT_USERAGENT => 'Mozilla/5.0',
         CURLOPT_SSL_VERIFYPEER => true,
         CURLOPT_HTTPHEADER => array_merge(
-            ['Accept: video/mp4,video/*;q=0.9,*/*;q=0.8', 'Referer: '.PLAYER_ORIGIN.'/'],
-            $range ? ['Range: '.$range] : []
+            ['Accept: video/mp4,video/*;q=0.9,*/*;q=0.8', 'Accept-Encoding: identity', 'Referer: '.PLAYER_ORIGIN.'/'],
+            $range !== '' ? ['Range: '.$range] : []
         ),
-        CURLOPT_HEADERFUNCTION => function($ch, $line) {
+        CURLOPT_HEADERFUNCTION => function($ch, $line) use (&$response, $range) {
             $trim = trim($line);
             if (preg_match('~^HTTP/\S+\s+(\d+)~i', $trim, $m)) {
-                $status = (int)$m[1];
-                if (in_array($status, [200,206,416], true)) http_response_code($status);
-                else http_response_code(502);
-            } elseif (preg_match('/^(content-type|content-length|content-range|accept-ranges):/i', $trim)) {
-                if (stripos($trim, 'content-type:') === 0) return strlen($line);
-                header($trim, true);
+                // Cada redireccionamento inicia um novo conjunto de cabeçalhos.
+                $response = ['status'=>(int)$m[1], 'headers'=>[], 'ready'=>false, 'send'=>false];
+            } elseif ($trim === '') {
+                $status = $response['status'];
+                if ($status >= 200 && $status < 300) {
+                    $partialOk = $range === '' || ($status === 206 && isset($response['headers']['content-range']));
+                    if (!$partialOk) {
+                        http_response_code(502);
+                    } else {
+                        http_response_code($status);
+                        header('Content-Type: '.($response['headers']['content-type'] ?? 'video/mp4'));
+                        foreach (['content-range'=>'Content-Range', 'content-length'=>'Content-Length', 'accept-ranges'=>'Accept-Ranges'] as $key=>$name) {
+                            if (isset($response['headers'][$key])) header($name.': '.$response['headers'][$key]);
+                        }
+                        if (!isset($response['headers']['accept-ranges']) && $status === 206) header('Accept-Ranges: bytes');
+                        $response['send'] = true;
+                    }
+                    $response['ready'] = true;
+                } elseif ($status === 416) {
+                    http_response_code(416);
+                    if (isset($response['headers']['content-range'])) header('Content-Range: '.$response['headers']['content-range']);
+                    $response['ready'] = true;
+                }
+            } elseif (preg_match('/^(content-type|content-length|content-range|accept-ranges):\s*(.*)$/i', $trim, $m)) {
+                $response['headers'][strtolower($m[1])] = trim($m[2]);
             }
             return strlen($line);
         },
-        CURLOPT_WRITEFUNCTION => function($ch, $chunk) {
-            $status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-            if (!in_array($status,[200,206],true)) return 0;
+        CURLOPT_WRITEFUNCTION => function($ch, $chunk) use (&$response) {
+            if (!$response['send']) return 0; // Não apresentar erro XML ou vídeo a partir do byte zero após seek.
             echo $chunk;
             if (function_exists('flush')) flush();
             return strlen($chunk);
         }
     ]);
     curl_exec($ch);
-    if (curl_errno($ch)) error_log('PlayMoz stream: '.curl_error($ch));
+    if (curl_errno($ch) && !$response['ready']) {
+        http_response_code(502);
+        error_log('PlayMoz stream: '.curl_error($ch));
+    }
     curl_close($ch);
     exit;
 }
@@ -573,18 +565,36 @@ function extractVideoLinks($html) {
     return array_values(array_unique($out));
 }
 function testVideoUrl($url) {
-    if (!function_exists('curl_init')) return ['ok'=>false];
-    $ch=curl_init($url);
-    curl_setopt_array($ch,[CURLOPT_NOBODY=>true,CURLOPT_RETURNTRANSFER=>true,CURLOPT_FOLLOWLOCATION=>true,CURLOPT_MAXREDIRS=>3,CURLOPT_CONNECTTIMEOUT=>4,CURLOPT_TIMEOUT=>9,CURLOPT_USERAGENT=>'Mozilla/5.0',CURLOPT_SSL_VERIFYPEER=>true]);
-    curl_exec($ch); $status=curl_getinfo($ch,CURLINFO_HTTP_CODE);$ctype=(string)curl_getinfo($ch,CURLINFO_CONTENT_TYPE);$effective=(string)curl_getinfo($ch,CURLINFO_EFFECTIVE_URL);curl_close($ch);
-    if ($effective && strtolower(parse_url($effective,PHP_URL_HOST)??'')===BLOCKED_HOST) return ['ok'=>false];
-    if (in_array($status,[403,405,501,0],true)) {
-        $ch=curl_init($url);
-        curl_setopt_array($ch,[CURLOPT_RETURNTRANSFER=>true,CURLOPT_RANGE=>'0-0',CURLOPT_FOLLOWLOCATION=>true,CURLOPT_MAXREDIRS=>3,CURLOPT_CONNECTTIMEOUT=>4,CURLOPT_TIMEOUT=>9,CURLOPT_USERAGENT=>'Mozilla/5.0',CURLOPT_SSL_VERIFYPEER=>true,CURLOPT_WRITEFUNCTION=>function($ch,$data){return strlen($data)>65536?0:strlen($data);}]);
-        curl_exec($ch);$status=curl_getinfo($ch,CURLINFO_HTTP_CODE);$ctype=(string)curl_getinfo($ch,CURLINFO_CONTENT_TYPE);$effective=(string)curl_getinfo($ch,CURLINFO_EFFECTIVE_URL);curl_close($ch);
-    }
-    $ok=in_array($status,[200,206],true) && !preg_match('~text/html|application/xml~i',$ctype) && strtolower(parse_url($effective?:$url,PHP_URL_HOST)??'')!==BLOCKED_HOST;
-    return ['ok'=>$ok];
+    if (!function_exists('curl_init')) return ['ok'=>false, 'seekable'=>false];
+    // Testa um byte real: um HEAD 200 não demonstra que o servidor permite saltar no MP4.
+    $received = 0;
+    $ch = curl_init($url);
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => false,
+        CURLOPT_RANGE => '0-0',
+        CURLOPT_FOLLOWLOCATION => true,
+        CURLOPT_MAXREDIRS => 3,
+        CURLOPT_CONNECTTIMEOUT => 4,
+        CURLOPT_TIMEOUT => 10,
+        CURLOPT_USERAGENT => 'Mozilla/5.0',
+        CURLOPT_HTTPHEADER => ['Accept-Encoding: identity', 'Referer: '.PLAYER_ORIGIN.'/'],
+        CURLOPT_SSL_VERIFYPEER => true,
+        CURLOPT_WRITEFUNCTION => function($ch, $data) use (&$received) {
+            $received += strlen($data);
+            // Limita respostas inesperadas de servidores que ignoram Range.
+            return $received <= 65536 ? strlen($data) : 0;
+        }
+    ]);
+    curl_exec($ch);
+    $status = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $ctype = (string)curl_getinfo($ch, CURLINFO_CONTENT_TYPE);
+    $effective = (string)curl_getinfo($ch, CURLINFO_EFFECTIVE_URL);
+    $error = curl_errno($ch);
+    curl_close($ch);
+    $validHost = strtolower(parse_url($effective ?: $url, PHP_URL_HOST) ?? '') !== BLOCKED_HOST;
+    $ok = $status === 206 && $received > 0 && !$error && $validHost
+        && !preg_match('~text/html|application/xml|application/json~i', $ctype);
+    return ['ok'=>$ok, 'seekable'=>$ok];
 }
 
 // Rotas aceites: /serie/1399/1/1, /series/1399/1/1 e /tv/1399/1/1.
