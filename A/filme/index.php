@@ -285,7 +285,7 @@ if (isset($_GET['stream'])) {
         CURLOPT_USERAGENT => 'Mozilla/5.0',
         CURLOPT_SSL_VERIFYPEER => true,
         CURLOPT_HTTPHEADER => array_merge(
-            ['Accept: video/mp4,video/*;q=0.9,*/*;q=0.8', 'Referer: '.PLAYER_ORIGIN.'/'],
+            ['Accept: video/mp4,video/*;q=0.9,*/*;q=0.8', 'Accept-Encoding: identity'],
             $range ? ['Range: '.$range] : []
         ),
         CURLOPT_HEADERFUNCTION => function($ch, $line) {
@@ -368,20 +368,51 @@ function pm_movie_slugs($tmdbId, $manual='') {
     return array_slice(array_values(array_unique(array_filter($slugs))),0,5);
 }
 function pm_server1_mp4($slug, $imdb) {
-    if (!preg_match('/^[a-z0-9]+(?:-[a-z0-9]+)*$/',$slug) || !preg_match('/^tt\d{5,12}$/',$imdb) || !function_exists('curl_init')) return null;
-    $url=SERVER1_ENDPOINT.rawurlencode($slug);
-    $ch=curl_init($url);
-    // Não descarrega o vídeo; inspeciona apenas o redireccionamento.
-    curl_setopt_array($ch,[CURLOPT_NOBODY=>true,CURLOPT_RETURNTRANSFER=>true,CURLOPT_FOLLOWLOCATION=>true,CURLOPT_MAXREDIRS=>3,CURLOPT_CONNECTTIMEOUT=>4,CURLOPT_TIMEOUT=>9,CURLOPT_USERAGENT=>'Mozilla/5.0',CURLOPT_SSL_VERIFYPEER=>true]);
-    curl_exec($ch);
-    $status=(int)curl_getinfo($ch,CURLINFO_HTTP_CODE);
-    $final=(string)curl_getinfo($ch,CURLINFO_EFFECTIVE_URL);
-    curl_close($ch);
-    $parts=parse_url($final);
-    if (!in_array($status,[200,206],true) || !$parts || ($parts['scheme']??'')!=='https') return null;
-    if (!preg_match('/^s3\.[a-z0-9-]+\.wasabisys\.com$/i', (string)($parts['host']??''))) return null;
-    if (!preg_match('~/(tt\d{5,12})\.mp4$~i',(string)($parts['path']??''),$match) || $match[1]!==$imdb) return null;
-    return $final;
+    if (!preg_match('/^[a-z0-9]+(?:-[a-z0-9]+)*$/', (string)$slug)
+        || !preg_match('/^tt\d{5,12}$/', (string)$imdb)
+        || !function_exists('curl_init')) return null;
+
+    $endpoint = SERVER1_ENDPOINT . rawurlencode($slug);
+    // Este endpoint responde com Location: <MP4 assinado>. NÃO seguir o
+    // redireccionamento: muitos fornecedores não respondem a HEAD do MP4.
+    foreach (['HEAD', 'GET'] as $method) {
+        $location = '';
+        $ch = curl_init($endpoint);
+        $opts = [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_FOLLOWLOCATION => false,
+            CURLOPT_CONNECTTIMEOUT => 6,
+            CURLOPT_TIMEOUT => 15,
+            CURLOPT_USERAGENT => 'Mozilla/5.0 (compatible; PlayMoz/1.0)',
+            CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_HEADERFUNCTION => function ($ch, $header) use (&$location) {
+                if (stripos($header, 'Location:') === 0) $location = trim(substr($header, 9));
+                return strlen($header);
+            },
+        ];
+        if ($method === 'HEAD') $opts[CURLOPT_NOBODY] = true;
+        else {
+            // GET de recurso que redirecciona; não permitir descarregar vídeo.
+            $opts[CURLOPT_RANGE] = '0-0';
+            $opts[CURLOPT_WRITEFUNCTION] = function ($ch, $chunk) { return 0; };
+        }
+        curl_setopt_array($ch, $opts);
+        curl_exec($ch);
+        $status = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+        if ($status >= 300 && $status < 400 && $location !== '') {
+            // Aceita só HTTPS de um armazenamento conhecido e filme correcto.
+            $parts = parse_url(html_entity_decode($location, ENT_QUOTES | ENT_HTML5, 'UTF-8'));
+            if (!$parts || strtolower($parts['scheme'] ?? '') !== 'https') return null;
+            $host = strtolower($parts['host'] ?? '');
+            if (!preg_match('/^s3\.[a-z0-9-]+\.wasabisys\.com$/', $host)) return null;
+            if (!preg_match('~/(tt\d{5,12})\.mp4$~i', $parts['path'] ?? '', $m)) return null;
+            if (strtolower($m[1]) !== strtolower($imdb)) return null;
+            return $location;
+        }
+        if ($status === 404) return null;
+    }
+    return null;
 }
 
 function extractVideoLinks($html) {
