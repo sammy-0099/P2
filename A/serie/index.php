@@ -62,9 +62,9 @@ if (isset($_GET['embed'])) {
 
     if (!preg_match('~^https?://~i', $url)) { http_response_code(502); exit('URL inválido'); }
 
-    $proxyUrl = SITE_BASE . strtok($_SERVER['REQUEST_URI'] ?? '/', '?') . '?stream=' . $token;
-
-    $urlJs    = json_encode($proxyUrl, JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_UNESCAPED_SLASHES);
+    // Usa o MP4 original verificado, sem passar pelo proxy ?stream=.
+    // Preserva integralmente a query assinada do Wasabi/S3.
+    $urlJs    = json_encode($url, JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_UNESCAPED_SLASHES);
     $rawJs    = json_encode($url,      JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_UNESCAPED_SLASHES);
     $labelJs  = json_encode($label,    JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT);
     $posterJs = json_encode($poster,   JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_UNESCAPED_SLASHES);
