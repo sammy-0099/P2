@@ -56,13 +56,15 @@ if (isset($_GET['embed'])) {
         echo '<!doctype html><html><body style="background:#000;color:#fff;font-family:sans-serif;display:grid;place-items:center;height:100vh;margin:0"><p>Fonte indisponível</p></body></html>';
         exit;
     }
-    $url    = SITE_BASE . strtok($_SERVER['REQUEST_URI'] ?? '/', '?') . '?stream=' . rawurlencode($token);
+    $url    = $entry['url'];
     $label  = $entry['label']  ?? 'HD';
     $poster = $entry['poster'] ?? 'https://i.imgur.com/XB5B8Md.jpeg';
 
     if (!preg_match('~^https?://~i', $url)) { http_response_code(502); exit('URL inválido'); }
 
-    $urlJs    = json_encode($url, JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_UNESCAPED_SLASHES);
+    $proxyUrl = SITE_BASE . strtok($_SERVER['REQUEST_URI'] ?? '/', '?') . '?stream=' . $token;
+
+    $urlJs    = json_encode($proxyUrl, JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_UNESCAPED_SLASHES);
     $rawJs    = json_encode($url,      JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_UNESCAPED_SLASHES);
     $labelJs  = json_encode($label,    JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT);
     $posterJs = json_encode($poster,   JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_UNESCAPED_SLASHES);
@@ -289,23 +291,6 @@ body.pm-content-playing.pm-video-ready #down>.down-list a{font-size:13px!importa
 @media(max-width:600px){.pm-ad-brand-icon{flex-basis:31px;width:31px;height:31px;border-radius:9px}.pm-ad-brand-icon svg{width:17px;height:17px}#pm-ad-heading .pm-ad-brand-copy strong{font-size:12px}#pm-ad-heading .pm-ad-brand-copy small{font-size:10px}#pm-ad-heading .pm-ad-status{font-size:10px!important;white-space:normal;text-align:right;line-height:1.25}#pm-ad-heading .pm-ad-status svg{width:14px;height:14px}#pm-ad-note{line-height:1.35!important;font-size:11px!important}body.pm-content-playing.pm-video-ready #down{right:calc(8px + env(safe-area-inset-right,0px))!important}body.pm-content-playing.pm-video-ready #down>.download{padding:9px 10px!important;font-size:10px!important}}
 @media(max-height:440px) and (orientation:landscape){.pm-ad-brand-icon{flex-basis:26px;width:26px;height:26px}.pm-ad-brand-icon svg{width:14px;height:14px}#pm-ad-heading .pm-ad-brand-copy small{display:none}#pm-ad-note svg{width:14px;height:14px}}
 
-
-/* Cabecalho do modal: agrupamento centrado e simetrico. */
-body:not(.pm-content-playing) #pm-ad-heading{
-  display:flex!important;flex-direction:column!important;justify-content:center!important;
-  align-items:center!important;text-align:center!important;gap:6px!important;
-  padding:12px 14px!important;min-height:75px!important;
-}
-body:not(.pm-content-playing) #pm-ad-heading .pm-ad-brand{
-  justify-content:center!important;text-align:left!important;
-}
-body:not(.pm-content-playing) #pm-ad-heading .pm-ad-status{
-  justify-content:center!important;text-align:center!important;
-}
-@media(max-width:600px){
- body:not(.pm-content-playing) #pm-ad-heading{min-height:70px!important;padding:9px 10px!important;gap:5px!important}
-}
-
 </style>
 </head>
 <body>
@@ -452,32 +437,9 @@ document.getElementById('pm-ad-fallback').addEventListener('click', function(){
 });
 player.on('buffer', pmHideErr);
 
+player.addButton('<svg xmlns="http://www.w3.org/2000/svg" class="jw-svg-icon jw-svg-icon-rewind2" viewBox="0 0 240 240" focusable="false"><path d="m 25.993957,57.778 v 125.3 c 0.03604,2.63589 2.164107,4.76396 4.8,4.8 h 62.7 v -19.3 h -48.2 v -96.4 H 160.99396 v 19.3 c 0,5.3 3.6,7.2 8,4.3 l 41.8,-27.9 c 2.93574,-1.480087 4.13843,-5.04363 2.7,-8 -0.57502,-1.174985 -1.52502,-2.124979 -2.7,-2.7 l -41.8,-27.9 c -4.4,-2.9 -8,-1 -8,4.3 v 19.3 H 30.893957 c -2.689569,0.03972 -4.860275,2.210431 -4.9,4.9 z m 163.422413,73.04577 c -3.72072,-6.30626 -10.38421,-10.29683 -17.7,-10.6 -7.31579,0.30317 -13.97928,4.29374 -17.7,10.6 -8.60009,14.23525 -8.60009,32.06475 0,46.3 3.72072,6.30626 10.38421,10.29683 17.7,10.6 7.31579,-0.30317 13.97928,-4.29374 17.7,-10.6 8.60009,-14.23525 8.60009,-32.06475 0,-46.3 z m -17.7,47.2 c -7.8,0 -14.4,-11 -14.4,-24.1 0,-13.1 6.6,-24.1 14.4,-24.1 7.8,0 14.4,11 14.4,24.1 0,13.1 -6.5,24.1 -14.4,24.1 z m -47.77056,9.72863 v -51 l -4.8,4.8 -6.8,-6.8 13,-12.99999 c 3.02543,-3.03598 8.21053,-0.88605 8.2,3.4 v 62.69999 z"></path></svg>', "Avançar 10s", function () { player.seek(player.getPosition() + 10); }, "Avançar 10s");
 
-/* Procurar na fonte MP4 directa: funciona com Range e sem reiniciar a reproducao.
-   Usa o elemento HTML5 caso o controlo seek da biblioteca nao esteja pronto. */
-function pmSeekSeconds(offset) {
-  if (pmAdActive || !document.body.classList.contains('pm-content-playing')) return;
-  try {
-    var media = document.querySelector('#ani-player video');
-    var position = media && Number.isFinite(media.currentTime) ? media.currentTime : Number(player.getPosition());
-    var duration = media && Number.isFinite(media.duration) ? media.duration : Number(player.getDuration());
-    if (!Number.isFinite(position)) return;
-    var target = Math.max(0, position + offset);
-    if (Number.isFinite(duration) && duration > 0) target = Math.min(target, Math.max(0, duration - 0.1));
-    if (media && media.seekable && media.seekable.length) {
-      var first = media.seekable.start(0), last = media.seekable.end(media.seekable.length - 1);
-      target = Math.min(Math.max(target, first), last);
-    }
-    if (media && media.readyState >= 1) media.currentTime = target;
-    else player.seek(target);
-  } catch (e) {
-    try { player.seek(Math.max(0, player.getPosition() + offset)); } catch (_) {}
-  }
-}
-
-player.addButton('<svg xmlns="http://www.w3.org/2000/svg" class="jw-svg-icon jw-svg-icon-rewind2" viewBox="0 0 240 240" focusable="false"><path d="m 25.993957,57.778 v 125.3 c 0.03604,2.63589 2.164107,4.76396 4.8,4.8 h 62.7 v -19.3 h -48.2 v -96.4 H 160.99396 v 19.3 c 0,5.3 3.6,7.2 8,4.3 l 41.8,-27.9 c 2.93574,-1.480087 4.13843,-5.04363 2.7,-8 -0.57502,-1.174985 -1.52502,-2.124979 -2.7,-2.7 l -41.8,-27.9 c -4.4,-2.9 -8,-1 -8,4.3 v 19.3 H 30.893957 c -2.689569,0.03972 -4.860275,2.210431 -4.9,4.9 z m 163.422413,73.04577 c -3.72072,-6.30626 -10.38421,-10.29683 -17.7,-10.6 -7.31579,0.30317 -13.97928,4.29374 -17.7,10.6 -8.60009,14.23525 -8.60009,32.06475 0,46.3 3.72072,6.30626 10.38421,10.29683 17.7,10.6 7.31579,-0.30317 13.97928,-4.29374 17.7,-10.6 8.60009,-14.23525 8.60009,-32.06475 0,-46.3 z m -17.7,47.2 c -7.8,0 -14.4,-11 -14.4,-24.1 0,-13.1 6.6,-24.1 14.4,-24.1 7.8,0 14.4,11 14.4,24.1 0,13.1 -6.5,24.1 -14.4,24.1 z m -47.77056,9.72863 v -51 l -4.8,4.8 -6.8,-6.8 13,-12.99999 c 3.02543,-3.03598 8.21053,-0.88605 8.2,3.4 v 62.69999 z"></path></svg>', "Avançar 10s", function () { pmSeekSeconds(10); }, "Avançar 10s");
-
-player.addButton('<svg xmlns="http://www.w3.org/2000/svg" class="jw-svg-icon jw-svg-icon-rewind" viewBox="0 0 240 240" focusable="false"><path d="M113.2,131.078a21.589,21.589,0,0,0-17.7-10.6,21.589,21.589,0,0,0-17.7,10.6,44.769,44.769,0,0,0,0,46.3,21.589,21.589,0,0,0,17.7,10.6,21.589,21.589,0,0,0,17.7-10.6,44.769,44.769,0,0,0,0-46.3Zm-17.7,47.2c-7.8,0-14.4-11-14.4-24.1s6.6-24.1,14.4-24.1,14.4,11,14.4,24.1S103.4,178.278,95.5,178.278Zm-43.4,9.7v-51l-4.8,4.8-6.8-6.8,13-13a4.8,4.8,0,0,1,8.2,3.4v62.7l-9.6-.1Zm162-130.2v125.3a4.867,4.867,0,0,1-4.8,4.8H146.6v-19.3h48.2v-96.4H79.1v19.3c0,5.3-3.6,7.2-8,4.3l-41.8-27.9a6.013,6.013,0,0,1-2.7-8,5.887,5.887,0,0,1,2.7-2.7l41.8-27.9c4.4-2.9,8-1,8,4.3v19.3H209.2A4.974,4.974,0,0,1,214.1,57.778Z"></path></svg>', "Voltar 10s", function () { pmSeekSeconds(-10); }, "Voltar 10s");
+player.addButton('<svg xmlns="http://www.w3.org/2000/svg" class="jw-svg-icon jw-svg-icon-rewind" viewBox="0 0 240 240" focusable="false"><path d="M113.2,131.078a21.589,21.589,0,0,0-17.7-10.6,21.589,21.589,0,0,0-17.7,10.6,44.769,44.769,0,0,0,0,46.3,21.589,21.589,0,0,0,17.7,10.6,21.589,21.589,0,0,0,17.7-10.6,44.769,44.769,0,0,0,0-46.3Zm-17.7,47.2c-7.8,0-14.4-11-14.4-24.1s6.6-24.1,14.4-24.1,14.4,11,14.4,24.1S103.4,178.278,95.5,178.278Zm-43.4,9.7v-51l-4.8,4.8-6.8-6.8,13-13a4.8,4.8,0,0,1,8.2,3.4v62.7l-9.6-.1Zm162-130.2v125.3a4.867,4.867,0,0,1-4.8,4.8H146.6v-19.3h48.2v-96.4H79.1v19.3c0,5.3-3.6,7.2-8,4.3l-41.8-27.9a6.013,6.013,0,0,1-2.7-8,5.887,5.887,0,0,1,2.7-2.7l41.8-27.9c4.4-2.9,8-1,8,4.3v19.3H209.2A4.974,4.974,0,0,1,214.1,57.778Z"></path></svg>', "Voltar 10s", function () { player.seek(player.getPosition() - 10); }, "Voltar 10s");
 </script>
 
 </body>
@@ -486,72 +448,82 @@ player.addButton('<svg xmlns="http://www.w3.org/2000/svg" class="jw-svg-icon jw-
     exit;
 }
 
-/* ============ PROXY STREAM HTTPS COM SUPORTE A RANGE ============ */
+/* ============ PROXY STREAM ============ */
 if (isset($_GET['stream'])) {
     $token = (string)$_GET['stream'];
     $entry = pm_store_get($token);
-    if (!is_array($entry)) { http_response_code(404); exit('Fonte expirada'); }
+    if (!is_array($entry)) { http_response_code(404); exit('Fonte indisponível'); }
     $url = $entry['url'];
     if (!function_exists('curl_init') || !preg_match('~^https?://~i', $url)) {
-        http_response_code(502); exit('Fonte inválida');
+        http_response_code(502); exit;
     }
-    $range = $_SERVER['HTTP_RANGE'] ?? '';
-    if ($range !== '' && !preg_match('/^bytes=\d*-\d*(?:,\d*-\d*)?$/', $range)) {
+    $range = trim($_SERVER['HTTP_RANGE'] ?? '');
+    if ($range !== '' && !preg_match('/^bytes=(?:\d+-\d*|-\d+)$/', $range)) {
         http_response_code(416); exit;
     }
-    @set_time_limit(0);
-    if (function_exists('apache_setenv')) @apache_setenv('no-gzip', '1');
-    ini_set('zlib.output_compression', '0');
-    while (ob_get_level()) @ob_end_clean();
-    header('Content-Type: video/mp4');
     header('Cache-Control: private, no-store');
     header('X-Content-Type-Options: nosniff');
     header('Access-Control-Allow-Origin: *');
-    header('Content-Encoding: identity');
-    if (isset($_GET['download'])) header('Content-Disposition: attachment; filename="PlayMoz-video.mp4"');
-    $headersStarted = false;
-    $status = 0;
+    header('Access-Control-Expose-Headers: Content-Length, Content-Range, Accept-Ranges');
+    // A origem precisa de honrar Range. Caso contrário, um seek regressaria ao início.
+    $response = ['status'=>0, 'headers'=>[], 'ready'=>false, 'send'=>false];
     $ch = curl_init($url);
     curl_setopt_array($ch, [
         CURLOPT_FOLLOWLOCATION => true,
-        CURLOPT_MAXREDIRS => 5,
-        CURLOPT_CONNECTTIMEOUT => 12,
+        CURLOPT_MAXREDIRS => 3,
+        CURLOPT_CONNECTTIMEOUT => 8,
         CURLOPT_TIMEOUT => 0,
         CURLOPT_RETURNTRANSFER => false,
         CURLOPT_BUFFERSIZE => 65536,
         CURLOPT_USERAGENT => 'Mozilla/5.0',
         CURLOPT_SSL_VERIFYPEER => true,
-        CURLOPT_HTTPHEADER => array_merge([
-            'Accept: video/mp4,video/*;q=0.9,*/*;q=0.8',
-            'Accept-Encoding: identity',
-            'Referer: '.PLAYER_ORIGIN.'/'
-        ], $range ? ['Range: '.$range] : []),
-        CURLOPT_HEADERFUNCTION => function($ch, $line) use (&$status) {
+        CURLOPT_HTTPHEADER => array_merge(
+            ['Accept: video/mp4,video/*;q=0.9,*/*;q=0.8', 'Accept-Encoding: identity', 'Referer: '.PLAYER_ORIGIN.'/'],
+            $range !== '' ? ['Range: '.$range] : []
+        ),
+        CURLOPT_HEADERFUNCTION => function($ch, $line) use (&$response, $range) {
             $trim = trim($line);
             if (preg_match('~^HTTP/\S+\s+(\d+)~i', $trim, $m)) {
-                $status = (int)$m[1];
-                if (in_array($status, [200,206,416], true)) http_response_code($status);
-                else http_response_code(502);
-                // Reset metadata on redirect/other upstream HTTP response
-                header_remove('Content-Length');
-                header_remove('Content-Range');
-                header_remove('Accept-Ranges');
-            } elseif (in_array($status, [200,206,416], true)) {
-                if (preg_match('/^(content-length|content-range|accept-ranges):\s*(.+)$/i', $trim, $m)) {
-                    header($m[1].': '.$m[2], true);
+                // Cada redireccionamento inicia um novo conjunto de cabeçalhos.
+                $response = ['status'=>(int)$m[1], 'headers'=>[], 'ready'=>false, 'send'=>false];
+            } elseif ($trim === '') {
+                $status = $response['status'];
+                if ($status >= 200 && $status < 300) {
+                    $partialOk = $range === '' || ($status === 206 && isset($response['headers']['content-range']));
+                    if (!$partialOk) {
+                        http_response_code(502);
+                    } else {
+                        http_response_code($status);
+                        header('Content-Type: '.($response['headers']['content-type'] ?? 'video/mp4'));
+                        foreach (['content-range'=>'Content-Range', 'content-length'=>'Content-Length', 'accept-ranges'=>'Accept-Ranges'] as $key=>$name) {
+                            if (isset($response['headers'][$key])) header($name.': '.$response['headers'][$key]);
+                        }
+                        if (!isset($response['headers']['accept-ranges']) && $status === 206) header('Accept-Ranges: bytes');
+                        $response['send'] = true;
+                    }
+                    $response['ready'] = true;
+                } elseif ($status === 416) {
+                    http_response_code(416);
+                    if (isset($response['headers']['content-range'])) header('Content-Range: '.$response['headers']['content-range']);
+                    $response['ready'] = true;
                 }
+            } elseif (preg_match('/^(content-type|content-length|content-range|accept-ranges):\s*(.*)$/i', $trim, $m)) {
+                $response['headers'][strtolower($m[1])] = trim($m[2]);
             }
             return strlen($line);
         },
-        CURLOPT_WRITEFUNCTION => function($ch, $chunk) use (&$status) {
-            if (!in_array($status, [200,206], true)) return 0;
+        CURLOPT_WRITEFUNCTION => function($ch, $chunk) use (&$response) {
+            if (!$response['send']) return 0; // Não apresentar erro XML ou vídeo a partir do byte zero após seek.
             echo $chunk;
-            if (function_exists('flush')) @flush();
+            if (function_exists('flush')) flush();
             return strlen($chunk);
         }
     ]);
     curl_exec($ch);
-    if (curl_errno($ch)) error_log('PlayMoz video proxy: '.curl_error($ch));
+    if (curl_errno($ch) && !$response['ready']) {
+        http_response_code(502);
+        error_log('PlayMoz stream: '.curl_error($ch));
+    }
     curl_close($ch);
     exit;
 }
@@ -593,18 +565,36 @@ function extractVideoLinks($html) {
     return array_values(array_unique($out));
 }
 function testVideoUrl($url) {
-    if (!function_exists('curl_init')) return ['ok'=>false];
-    $ch=curl_init($url);
-    curl_setopt_array($ch,[CURLOPT_NOBODY=>true,CURLOPT_RETURNTRANSFER=>true,CURLOPT_FOLLOWLOCATION=>true,CURLOPT_MAXREDIRS=>3,CURLOPT_CONNECTTIMEOUT=>4,CURLOPT_TIMEOUT=>9,CURLOPT_USERAGENT=>'Mozilla/5.0',CURLOPT_SSL_VERIFYPEER=>true]);
-    curl_exec($ch); $status=curl_getinfo($ch,CURLINFO_HTTP_CODE);$ctype=(string)curl_getinfo($ch,CURLINFO_CONTENT_TYPE);$effective=(string)curl_getinfo($ch,CURLINFO_EFFECTIVE_URL);curl_close($ch);
-    if ($effective && strtolower(parse_url($effective,PHP_URL_HOST)??'')===BLOCKED_HOST) return ['ok'=>false];
-    if (in_array($status,[403,405,501,0],true)) {
-        $ch=curl_init($url);
-        curl_setopt_array($ch,[CURLOPT_RETURNTRANSFER=>true,CURLOPT_RANGE=>'0-0',CURLOPT_FOLLOWLOCATION=>true,CURLOPT_MAXREDIRS=>3,CURLOPT_CONNECTTIMEOUT=>4,CURLOPT_TIMEOUT=>9,CURLOPT_USERAGENT=>'Mozilla/5.0',CURLOPT_SSL_VERIFYPEER=>true,CURLOPT_WRITEFUNCTION=>function($ch,$data){return strlen($data)>65536?0:strlen($data);}]);
-        curl_exec($ch);$status=curl_getinfo($ch,CURLINFO_HTTP_CODE);$ctype=(string)curl_getinfo($ch,CURLINFO_CONTENT_TYPE);$effective=(string)curl_getinfo($ch,CURLINFO_EFFECTIVE_URL);curl_close($ch);
-    }
-    $ok=in_array($status,[200,206],true) && !preg_match('~text/html|application/xml~i',$ctype) && strtolower(parse_url($effective?:$url,PHP_URL_HOST)??'')!==BLOCKED_HOST;
-    return ['ok'=>$ok];
+    if (!function_exists('curl_init')) return ['ok'=>false, 'seekable'=>false];
+    // Testa um byte real: um HEAD 200 não demonstra que o servidor permite saltar no MP4.
+    $received = 0;
+    $ch = curl_init($url);
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => false,
+        CURLOPT_RANGE => '0-0',
+        CURLOPT_FOLLOWLOCATION => true,
+        CURLOPT_MAXREDIRS => 3,
+        CURLOPT_CONNECTTIMEOUT => 4,
+        CURLOPT_TIMEOUT => 10,
+        CURLOPT_USERAGENT => 'Mozilla/5.0',
+        CURLOPT_HTTPHEADER => ['Accept-Encoding: identity', 'Referer: '.PLAYER_ORIGIN.'/'],
+        CURLOPT_SSL_VERIFYPEER => true,
+        CURLOPT_WRITEFUNCTION => function($ch, $data) use (&$received) {
+            $received += strlen($data);
+            // Limita respostas inesperadas de servidores que ignoram Range.
+            return $received <= 65536 ? strlen($data) : 0;
+        }
+    ]);
+    curl_exec($ch);
+    $status = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $ctype = (string)curl_getinfo($ch, CURLINFO_CONTENT_TYPE);
+    $effective = (string)curl_getinfo($ch, CURLINFO_EFFECTIVE_URL);
+    $error = curl_errno($ch);
+    curl_close($ch);
+    $validHost = strtolower(parse_url($effective ?: $url, PHP_URL_HOST) ?? '') !== BLOCKED_HOST;
+    $ok = $status === 206 && $received > 0 && !$error && $validHost
+        && !preg_match('~text/html|application/xml|application/json~i', $ctype);
+    return ['ok'=>$ok, 'seekable'=>$ok];
 }
 
 // Rotas aceites: /serie/1399/1/1, /series/1399/1/1 e /tv/1399/1/1.
