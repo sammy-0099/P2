@@ -291,23 +291,6 @@ body.pm-content-playing.pm-video-ready #down>.down-list a{font-size:13px!importa
 @media(max-width:600px){.pm-ad-brand-icon{flex-basis:31px;width:31px;height:31px;border-radius:9px}.pm-ad-brand-icon svg{width:17px;height:17px}#pm-ad-heading .pm-ad-brand-copy strong{font-size:12px}#pm-ad-heading .pm-ad-brand-copy small{font-size:10px}#pm-ad-heading .pm-ad-status{font-size:10px!important;white-space:normal;text-align:right;line-height:1.25}#pm-ad-heading .pm-ad-status svg{width:14px;height:14px}#pm-ad-note{line-height:1.35!important;font-size:11px!important}body.pm-content-playing.pm-video-ready #down{right:calc(8px + env(safe-area-inset-right,0px))!important}body.pm-content-playing.pm-video-ready #down>.download{padding:9px 10px!important;font-size:10px!important}}
 @media(max-height:440px) and (orientation:landscape){.pm-ad-brand-icon{flex-basis:26px;width:26px;height:26px}.pm-ad-brand-icon svg{width:14px;height:14px}#pm-ad-heading .pm-ad-brand-copy small{display:none}#pm-ad-note svg{width:14px;height:14px}}
 
-
-/* Cabecalho do modal: agrupamento centrado e simetrico. */
-body:not(.pm-content-playing) #pm-ad-heading{
-  display:flex!important;flex-direction:column!important;justify-content:center!important;
-  align-items:center!important;text-align:center!important;gap:6px!important;
-  padding:12px 14px!important;min-height:75px!important;
-}
-body:not(.pm-content-playing) #pm-ad-heading .pm-ad-brand{
-  justify-content:center!important;text-align:left!important;
-}
-body:not(.pm-content-playing) #pm-ad-heading .pm-ad-status{
-  justify-content:center!important;text-align:center!important;
-}
-@media(max-width:600px){
- body:not(.pm-content-playing) #pm-ad-heading{min-height:70px!important;padding:9px 10px!important;gap:5px!important}
-}
-
 </style>
 </head>
 <body>
