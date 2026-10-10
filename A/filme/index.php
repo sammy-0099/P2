@@ -198,6 +198,68 @@ body.pm-content-playing.pm-video-ready #down{right:clamp(6px,2vw,16px)!important
 body.pm-content-playing.pm-video-ready #down-list{z-index:1201!important}
 @media(max-width:380px){body.pm-content-playing.pm-video-ready #pm-back-btn{padding:10px 13px!important}body.pm-content-playing.pm-video-ready .download{padding:10px 8px!important;letter-spacing:0!important}}
 
+
+/* === PLAYMOZ VAST CINEMA: exclusivo ao modal publicitário === */
+body:not(.pm-content-playing) #pm-ad-shell{
+  isolation:isolate; padding:clamp(8px,1.4vw,18px)!important;
+  background:rgba(2,3,8,.88)!important;
+  backdrop-filter:blur(25px) brightness(.45)!important;
+  -webkit-backdrop-filter:blur(25px) brightness(.45)!important;
+}
+body:not(.pm-content-playing) #pm-ad-shell:before{
+  content:"";position:absolute;inset:-35px;z-index:-1;
+  background-image:var(--pm-ad-poster,none);background-size:cover;background-position:center;
+  filter:blur(40px) brightness(.25) saturate(.6);opacity:.72;pointer-events:none;
+}
+body:not(.pm-content-playing) #pm-ad-dialog{
+  width:min(1480px,98vw)!important;max-width:100%!important;
+  height:min(92dvh,900px)!important;max-height:calc(100dvh - 16px)!important;
+  display:flex;flex-direction:column;position:relative;
+  border:1px solid rgba(255,255,255,.15)!important;border-radius:clamp(12px,1.6vw,23px)!important;
+  background:#090b10!important;
+  box-shadow:0 32px 120px rgba(0,0,0,.9),0 0 0 1px rgba(255,42,58,.09)!important;
+}
+body:not(.pm-content-playing) #pm-ad-heading{
+  flex:0 0 auto;min-height:55px!important;padding:12px clamp(12px,2vw,25px)!important;
+  background:linear-gradient(110deg,#151821,#0b0c12)!important;
+}
+body:not(.pm-content-playing) #pm-ad-heading span:first-child{font-size:clamp(11px,1vw,14px)!important}
+body:not(.pm-content-playing) #pm-ad-heading span:last-child{font-size:clamp(10px,.9vw,12px)!important}
+body:not(.pm-content-playing) #pm-ad-video{
+  flex:1 1 auto;min-height:0!important;width:100%;height:auto!important;
+  max-height:none!important;aspect-ratio:auto!important;display:flex;
+  align-items:center;justify-content:center;background:#000!important;
+}
+body:not(.pm-content-playing) #pm-ad-video #ani-player,
+body:not(.pm-content-playing) #pm-ad-video .jwplayer{
+  width:100%!important;height:100%!important;max-width:none!important;max-height:none!important;
+}
+body:not(.pm-content-playing) #pm-ad-video video{object-fit:contain!important}
+body:not(.pm-content-playing) #pm-ad-note{
+  flex:0 0 auto;min-height:44px;box-sizing:border-box;
+  padding:12px clamp(12px,2vw,25px)!important;
+  background:linear-gradient(110deg,#13151b,#0c0d12)!important;
+}
+body:not(.pm-content-playing) #pm-ad-fallback{flex:0 0 auto}
+body.pm-content-playing #pm-ad-shell:before{display:none}
+@media (max-width:600px){
+ body:not(.pm-content-playing) #pm-ad-shell{padding:5px!important}
+ body:not(.pm-content-playing) #pm-ad-dialog{
+   width:calc(100vw - 10px)!important;height:calc(100dvh - 18px)!important;
+   border-radius:14px!important;
+ }
+ body:not(.pm-content-playing) #pm-ad-heading{min-height:50px!important;padding:10px 11px!important}
+ body:not(.pm-content-playing) #pm-ad-heading span:first-child{letter-spacing:0!important;font-size:11px!important}
+ body:not(.pm-content-playing) #pm-ad-heading span:last-child{max-width:42%;font-size:10px!important}
+ body:not(.pm-content-playing) #pm-ad-note{padding:12px!important;font-size:11px!important}
+}
+@media (max-height:440px) and (orientation:landscape){
+ body:not(.pm-content-playing) #pm-ad-dialog{height:calc(100dvh - 8px)!important}
+ body:not(.pm-content-playing) #pm-ad-heading{min-height:37px!important;padding:5px 12px!important}
+ body:not(.pm-content-playing) #pm-ad-heading span:first-child:before{width:22px;height:22px}
+ body:not(.pm-content-playing) #pm-ad-note{min-height:28px!important;padding:5px 12px!important}
+}
+
 </style>
 </head>
 <body>
@@ -283,6 +345,10 @@ function pmHideErr(){
   if (el) el.classList.remove('on');
 }
 
+// Fundo cinematográfico exclusivo do VAST; não modifica o player normal.
+try {
+  document.getElementById('pm-ad-shell').style.setProperty('--pm-ad-poster', 'url(' + JSON.stringify(<?= $posterJs ?>) + ')');
+} catch(e) {}
 var player = jwplayer("ani-player");
 player.setup({
   sources: [{ file: <?= $urlJs ?>, label: <?= $labelJs ?>, type: "mp4", default: "false" }],
