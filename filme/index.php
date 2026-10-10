@@ -201,6 +201,15 @@ player.setup({
   mute: false,
   preload: "auto",
   image: <?= $posterJs ?>,
+  // HilltopAds — VAST 3.0 pre-roll: tenta apresentar antes do conteudo.
+  // Requer a funcionalidade de publicidade activa na licenca JW Player.
+  advertising: {
+    client: "vast",
+    tag: "https://funny-tooth.com/d-mOFUzHd.G_NMvJZmGJUw/feOmr9xuwZCU_l/k/PxT/c/1MM/Dhcp0/Nvj/EatGNHztU/wtNnzLQH2INgQv",
+    admessage: "Publicidade",
+    skipmessage: "Saltar anuncio em xx",
+    skiptext: "Saltar anuncio",
+  },
   playbackRateControls: [0.5, 0.75, 1, 1.25, 1.5, 2],
   debug: false,
   cast: {},
