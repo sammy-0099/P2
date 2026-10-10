@@ -76,7 +76,7 @@ if (isset($_GET['embed'])) {
 <head>
 <meta charset="utf-8">
 <meta name="robots" content="noindex, nofollow">
-<meta content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" name="viewport"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
 <title>PlayMoz Player</title>
 <script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.3.1/jquery.min.js"></script>
 <script type="text/javascript" src="https://ssl.p.jwpcdn.com/player/v/8.6.2/jwplayer.js"></script>
@@ -95,41 +95,6 @@ if (isset($_GET['embed'])) {
  .down-list li:hover > a { color:#fff }
  .down-list li a { color:#fff; text-decoration:none; font-family:"Open-Sans", sans-serif; font-size:18px; width:100% }
  .jw-icon.jw-icon-inline.jw-button-color.jw-reset.jw-icon-rewind { display:none; }
-
- /* Modal VAST: bloqueia toda a interface enquanto o anúncio está ativo. */
- #pm-ad-shell{position:fixed;inset:0;z-index:100;display:flex;align-items:center;justify-content:center;padding:20px;background:rgba(2,3,9,.94);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);box-sizing:border-box;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
- #pm-ad-dialog{width:min(720px,100%);background:#10131b;border:1px solid #323849;border-radius:18px;overflow:hidden;box-shadow:0 35px 120px #000;box-sizing:border-box}
- #pm-ad-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 16px;color:#f5f5f7;font-size:13px;font-weight:650}
- #pm-ad-heading span:last-child{color:#a2a6b4;font-size:11px;font-weight:500}
- #pm-ad-video{width:100%;aspect-ratio:16/9;background:#000;position:relative;overflow:hidden}
- #ani-player{width:100%!important;height:100%!important}
- #pm-ad-note{padding:11px 16px;color:#a2a6b4;font-size:12px;line-height:1.5;text-align:center}
- #pm-ad-fallback{display:none;margin:0 16px 16px;padding:12px 15px;border:1px solid #4a3a3c;border-radius:10px;background:#241719;color:#fff;cursor:pointer;font:600 13px system-ui}
- #pm-ad-fallback.on{display:block}
- /* Quando o conteúdo começa, converte a mesma instância JW em player normal. */
- body.pm-content-playing #pm-ad-shell{display:block;background:#000;padding:0;backdrop-filter:none;-webkit-backdrop-filter:none}
- body.pm-content-playing #pm-ad-dialog{width:100%;height:100%;max-width:none;border:0;border-radius:0;box-shadow:none}
- body.pm-content-playing #pm-ad-video{width:100%;height:100%;aspect-ratio:auto}
- body.pm-content-playing #pm-ad-heading,body.pm-content-playing #pm-ad-note,body.pm-content-playing #pm-ad-fallback{display:none!important}
- body.pm-content-playing #down,body.pm-content-playing #btn_try{z-index:110!important}
- body.pm-content-playing #pm-back-btn{z-index:110!important}
- #pm-err{z-index:150!important}
- @media(max-width:550px){#pm-ad-shell{padding:12px}#pm-ad-dialog{border-radius:14px}#pm-ad-heading{padding:10px 12px}#pm-ad-note{font-size:11px;padding:10px}}
-
- /* Mantém os comandos originais fora do carregamento e da publicidade. */
- #pm-back-btn,#down{visibility:hidden!important;opacity:0!important;pointer-events:none!important;transition:opacity .24s ease,visibility .24s ease}
- body.pm-video-ready #pm-back-btn,body.pm-video-ready #down{visibility:visible!important;opacity:1!important;pointer-events:auto!important}
- body.pm-video-ready #pm-back-btn{z-index:110!important}
- body.pm-video-ready #down{z-index:110!important}
- /* O modal usa o visual simples do player original, sem uma barra de publicidade invasiva. */
- #pm-ad-shell{background:rgba(0,0,0,.88);backdrop-filter:blur(5px);-webkit-backdrop-filter:blur(5px)}
- #pm-ad-dialog{border:1px solid rgba(255,255,255,.11);border-radius:12px;background:#080808;box-shadow:0 20px 80px rgba(0,0,0,.8)}
- #pm-ad-heading{background:#090909;border-bottom:1px solid rgba(255,255,255,.08)}
- #pm-ad-heading span:first-child{color:#ff3535}
- #pm-ad-note{background:#090909}
- body.pm-content-playing #pm-ad-shell{background:#000}
- body.pm-content-playing #pm-ad-dialog{background:#000}
- @media(max-width:550px){#pm-ad-dialog{border-radius:10px}}
 
  /* 👇 Overlay elegante para erro de reprodução */
  #pm-err{
@@ -167,146 +132,9 @@ if (isset($_GET['embed'])) {
    border-color:rgba(255,0,0,.5);
    background:linear-gradient(145deg,#2c1a1c,#1a1012);
  }
-
-/* PlayMoz · interface unificada do anúncio (filme e série) */
-#pm-ad-shell{z-index:1000!important;padding:clamp(12px,3vw,32px)!important;background:radial-gradient(ellipse at 50% 15%,rgba(70,12,22,.23),transparent 64%),rgba(2,3,7,.94)!important;backdrop-filter:blur(18px) saturate(.8)!important;-webkit-backdrop-filter:blur(18px) saturate(.8)!important}
-#pm-ad-dialog{width:min(780px,100%)!important;max-height:calc(100dvh - 24px);border:1px solid rgba(255,255,255,.12)!important;border-radius:20px!important;background:#111216!important;box-shadow:0 30px 110px rgba(0,0,0,.78),0 0 0 1px rgba(255,42,59,.06)!important;overflow:hidden;animation:pmAdEnter .38s cubic-bezier(.2,.85,.2,1) both}
-@keyframes pmAdEnter{from{opacity:0;transform:translateY(14px) scale(.975)}to{opacity:1;transform:none}}
-#pm-ad-heading{padding:17px 20px!important;background:linear-gradient(120deg,#191a20,#111216)!important;border-bottom:1px solid rgba(255,255,255,.09)!important;min-height:52px;box-sizing:border-box;letter-spacing:.01em}
-#pm-ad-heading span:first-child{display:inline-flex;align-items:center;gap:10px;color:#fafafa!important;font-size:13px;font-weight:800;letter-spacing:.055em}
-#pm-ad-heading span:first-child:before{content:'▶';display:grid;place-items:center;width:29px;height:29px;border-radius:9px;background:linear-gradient(135deg,#ff3348,#ba0b22);font-size:12px;color:white;box-shadow:0 4px 15px #ff253c33}
-#pm-ad-heading span:last-child{font-size:11px!important;color:#b9b9c3!important}
-#pm-ad-video{background:#050506!important;aspect-ratio:16/9!important;max-height:calc(100dvh - 185px);min-height:0}
-#pm-ad-note{background:#111216!important;color:#b4b5c1!important;padding:15px 20px 17px!important;font-size:12px!important;line-height:1.6!important;text-align:left!important;border-top:1px solid rgba(255,255,255,.06)}
-#pm-ad-note:before{content:'●';color:#fa3447;font-size:10px;margin-right:8px}
-#pm-ad-fallback{width:calc(100% - 40px);margin:0 20px 18px!important;border:1px solid rgba(255,53,71,.45)!important;background:linear-gradient(135deg,#ad152c,#720b1e)!important;border-radius:12px!important;padding:13px 15px!important;font-weight:750!important;text-align:center}
-#pm-ad-fallback:focus-visible{outline:2px solid #fff;outline-offset:2px}
-body.pm-content-playing #pm-ad-shell{padding:0!important;background:#000!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important}
-body.pm-content-playing #pm-ad-dialog{width:100%!important;max-height:none!important;height:100%!important;border:none!important;border-radius:0!important;box-shadow:none!important;animation:none!important;background:#000!important}
-body.pm-content-playing #pm-ad-video{height:100%!important;max-height:none!important;aspect-ratio:auto!important}
-body.pm-content-playing #pm-ad-heading,body.pm-content-playing #pm-ad-note,body.pm-content-playing #pm-ad-fallback{display:none!important}
-@media(max-width:550px){#pm-ad-shell{padding:12px!important}#pm-ad-dialog{border-radius:15px!important}#pm-ad-heading{padding:12px 13px!important;gap:6px!important}#pm-ad-heading span:first-child{font-size:11px!important;gap:7px}#pm-ad-heading span:first-child:before{width:24px;height:24px}#pm-ad-heading span:last-child{font-size:10px!important;text-align:right}#pm-ad-note{font-size:11px!important;padding:12px 13px!important}#pm-ad-fallback{width:calc(100% - 26px);margin:0 13px 13px!important}}
-@media(prefers-reduced-motion:reduce){#pm-ad-dialog{animation:none!important}}
-/* PlayMoz: restaurar comandos de topo acima do player de conteúdo. */
-body.pm-content-playing.pm-video-ready #pm-back-btn,
-body.pm-content-playing.pm-video-ready #down{
-  z-index:1200!important;visibility:visible!important;opacity:1!important;
-  pointer-events:auto!important;position:fixed!important;top:calc(8px + env(safe-area-inset-top, 0px));
-}
-body.pm-content-playing.pm-video-ready #pm-back-btn{left:clamp(6px,2vw,16px)!important}
-body.pm-content-playing.pm-video-ready #down{right:clamp(6px,2vw,16px)!important}
-body.pm-content-playing.pm-video-ready #down-list{z-index:1201!important}
-@media(max-width:380px){body.pm-content-playing.pm-video-ready #pm-back-btn{padding:10px 13px!important}body.pm-content-playing.pm-video-ready .download{padding:10px 8px!important;letter-spacing:0!important}}
-
-
-/* === PLAYMOZ VAST CINEMA: exclusivo ao modal publicitário === */
-body:not(.pm-content-playing) #pm-ad-shell{
-  isolation:isolate; padding:clamp(8px,1.4vw,18px)!important;
-  background:rgba(2,3,8,.88)!important;
-  backdrop-filter:blur(25px) brightness(.45)!important;
-  -webkit-backdrop-filter:blur(25px) brightness(.45)!important;
-}
-body:not(.pm-content-playing) #pm-ad-shell:before{
-  content:"";position:absolute;inset:-35px;z-index:-1;
-  background-image:var(--pm-ad-poster,none);background-size:cover;background-position:center;
-  filter:blur(40px) brightness(.25) saturate(.6);opacity:.72;pointer-events:none;
-}
-body:not(.pm-content-playing) #pm-ad-dialog{
-  width:min(1480px,98vw)!important;max-width:100%!important;
-  height:min(92dvh,900px)!important;max-height:calc(100dvh - 16px)!important;
-  display:flex;flex-direction:column;position:relative;
-  border:1px solid rgba(255,255,255,.15)!important;border-radius:clamp(12px,1.6vw,23px)!important;
-  background:#090b10!important;
-  box-shadow:0 32px 120px rgba(0,0,0,.9),0 0 0 1px rgba(255,42,58,.09)!important;
-}
-body:not(.pm-content-playing) #pm-ad-heading{
-  flex:0 0 auto;min-height:55px!important;padding:12px clamp(12px,2vw,25px)!important;
-  background:linear-gradient(110deg,#151821,#0b0c12)!important;
-}
-body:not(.pm-content-playing) #pm-ad-heading span:first-child{font-size:clamp(11px,1vw,14px)!important}
-body:not(.pm-content-playing) #pm-ad-heading span:last-child{font-size:clamp(10px,.9vw,12px)!important}
-body:not(.pm-content-playing) #pm-ad-video{
-  flex:1 1 auto;min-height:0!important;width:100%;height:auto!important;
-  max-height:none!important;aspect-ratio:auto!important;display:flex;
-  align-items:center;justify-content:center;background:#000!important;
-}
-body:not(.pm-content-playing) #pm-ad-video #ani-player,
-body:not(.pm-content-playing) #pm-ad-video .jwplayer{
-  width:100%!important;height:100%!important;max-width:none!important;max-height:none!important;
-}
-body:not(.pm-content-playing) #pm-ad-video video{object-fit:contain!important}
-body:not(.pm-content-playing) #pm-ad-note{
-  flex:0 0 auto;min-height:44px;box-sizing:border-box;
-  padding:12px clamp(12px,2vw,25px)!important;
-  background:linear-gradient(110deg,#13151b,#0c0d12)!important;
-}
-body:not(.pm-content-playing) #pm-ad-fallback{flex:0 0 auto}
-body.pm-content-playing #pm-ad-shell:before{display:none}
-@media (max-width:600px){
- body:not(.pm-content-playing) #pm-ad-shell{padding:5px!important}
- body:not(.pm-content-playing) #pm-ad-dialog{
-   width:calc(100vw - 10px)!important;height:calc(100dvh - 18px)!important;
-   border-radius:14px!important;
- }
- body:not(.pm-content-playing) #pm-ad-heading{min-height:50px!important;padding:10px 11px!important}
- body:not(.pm-content-playing) #pm-ad-heading span:first-child{letter-spacing:0!important;font-size:11px!important}
- body:not(.pm-content-playing) #pm-ad-heading span:last-child{max-width:42%;font-size:10px!important}
- body:not(.pm-content-playing) #pm-ad-note{padding:12px!important;font-size:11px!important}
-}
-@media (max-height:440px) and (orientation:landscape){
- body:not(.pm-content-playing) #pm-ad-dialog{height:calc(100dvh - 8px)!important}
- body:not(.pm-content-playing) #pm-ad-heading{min-height:37px!important;padding:5px 12px!important}
- body:not(.pm-content-playing) #pm-ad-heading span:first-child:before{width:22px;height:22px}
- body:not(.pm-content-playing) #pm-ad-note{min-height:28px!important;padding:5px 12px!important}
-}
-
-
-/* PLAYMOZ VAST PREMIUM: tipografia, SVG, alinhamento e player sem zoom */
-html,body{overscroll-behavior:none;-webkit-text-size-adjust:100%;text-size-adjust:100%}
-#pm-ad-shell,#pm-ad-dialog,#pm-ad-video,#ani-player{touch-action:manipulation}
-body:not(.pm-content-playing) #pm-ad-dialog{font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",Arial,sans-serif!important}
-body:not(.pm-content-playing) #pm-ad-heading{display:flex!important;align-items:center!important;justify-content:space-between!important;gap:12px!important}
-#pm-ad-heading .pm-ad-brand{display:flex!important;align-items:center;gap:11px;color:#fff!important;min-width:0;letter-spacing:0!important}
-#pm-ad-heading .pm-ad-brand::before{content:none!important;display:none!important}
-.pm-ad-brand-icon{flex:0 0 36px;width:36px;height:36px;display:grid;place-items:center;color:#fff;border-radius:11px;background:linear-gradient(135deg,#ff3d50,#c80829);box-shadow:0 5px 18px rgba(255,25,59,.22)}
-.pm-ad-brand-icon svg{width:20px;height:20px}
-.pm-ad-brand-copy{display:flex;flex-direction:column;gap:2px;min-width:0}
-#pm-ad-heading .pm-ad-brand-copy strong{font-size:clamp(13px,1.2vw,16px);font-weight:850;letter-spacing:-.035em;line-height:1.15;color:#fff}
-#pm-ad-heading .pm-ad-brand-copy small{font-size:11px;font-weight:570;letter-spacing:.015em;line-height:1.25;color:#b7bac5}
-#pm-ad-heading .pm-ad-status{display:inline-flex!important;align-items:center;gap:7px;color:#e2e3e9!important;font-weight:750!important;font-size:clamp(10px,.95vw,12px)!important;letter-spacing:0!important;white-space:nowrap}
-.pm-ad-status svg{width:15px;height:15px;color:#ff455b;flex:none}
-#pm-ad-note{display:flex;align-items:center;gap:10px!important;letter-spacing:0!important;font-weight:550!important}
-#pm-ad-note::before{content:none!important;display:none!important}
-#pm-ad-note svg{width:18px;height:18px;flex:none;color:#ff5065}
-#pm-ad-note span{flex:1}
-#pm-ad-fallback{display:none;align-items:center;justify-content:center;gap:9px;font-family:Inter,ui-sans-serif,system-ui,sans-serif!important;font-weight:800!important;letter-spacing:-.01em}
-#pm-ad-fallback.on{display:flex!important}
-#pm-ad-fallback svg{width:18px;height:18px}
-/* Comando Espelhar/Baixar centralizado (filmes e séries) */
-body.pm-content-playing.pm-video-ready #down{box-sizing:border-box!important;margin:0!important;display:flex!important;align-items:center!important;justify-content:center!important;right:calc(12px + env(safe-area-inset-right,0px))!important;left:auto!important;top:calc(12px + env(safe-area-inset-top,0px))!important}
-body.pm-content-playing.pm-video-ready #down>.download{box-sizing:border-box!important;display:inline-flex!important;align-items:center!important;justify-content:center!important;min-height:37px!important;margin:0!important;padding:9px 14px!important;line-height:1.2!important;text-align:center!important;white-space:nowrap;letter-spacing:.015em!important}
-body.pm-content-playing.pm-video-ready #down>.down-list{box-sizing:border-box!important;top:calc(100% + 8px)!important;left:auto!important;right:0!important;margin:0!important;padding:5px!important;min-width:160px!important;width:max-content!important;max-width:calc(100vw - 20px)!important;border-radius:14px!important}
-body.pm-content-playing.pm-video-ready #down>.down-list li{float:none!important;width:100%!important;box-sizing:border-box!important;margin:0!important;padding:8px 10px!important}
-body.pm-content-playing.pm-video-ready #down>.down-list a{font-size:13px!important;font-weight:700!important}
-@media(max-width:600px){.pm-ad-brand-icon{flex-basis:31px;width:31px;height:31px;border-radius:9px}.pm-ad-brand-icon svg{width:17px;height:17px}#pm-ad-heading .pm-ad-brand-copy strong{font-size:12px}#pm-ad-heading .pm-ad-brand-copy small{font-size:10px}#pm-ad-heading .pm-ad-status{font-size:10px!important;white-space:normal;text-align:right;line-height:1.25}#pm-ad-heading .pm-ad-status svg{width:14px;height:14px}#pm-ad-note{line-height:1.35!important;font-size:11px!important}body.pm-content-playing.pm-video-ready #down{right:calc(8px + env(safe-area-inset-right,0px))!important}body.pm-content-playing.pm-video-ready #down>.download{padding:9px 10px!important;font-size:10px!important}}
-@media(max-height:440px) and (orientation:landscape){.pm-ad-brand-icon{flex-basis:26px;width:26px;height:26px}.pm-ad-brand-icon svg{width:14px;height:14px}#pm-ad-heading .pm-ad-brand-copy small{display:none}#pm-ad-note svg{width:14px;height:14px}}
-
 </style>
 </head>
 <body>
-<script>
-/* Impede ampliacao por pinça, duplo toque e atalhos enquanto este player está aberto. */
-(function(){
-  var lastTouchEnd=0;
-  document.addEventListener('gesturestart',function(e){e.preventDefault()},{passive:false});
-  document.addEventListener('gesturechange',function(e){e.preventDefault()},{passive:false});
-  document.addEventListener('touchmove',function(e){if(e.touches.length>1)e.preventDefault()},{passive:false});
-  document.addEventListener('touchend',function(e){var now=Date.now();if(now-lastTouchEnd<280 && e.changedTouches.length===1)e.preventDefault();lastTouchEnd=now},{passive:false});
-  document.addEventListener('wheel',function(e){if(e.ctrlKey)e.preventDefault()},{passive:false});
-  document.addEventListener('keydown',function(e){if((e.ctrlKey||e.metaKey)&&['+','-','=','0'].includes(e.key))e.preventDefault()});
-})();
-</script>
-
 <script>
 function goBack(){
   try{
@@ -322,7 +150,7 @@ function goBack(){
 </script>
 
 <!-- 👇 Botão Voltar original -->
-<div id="pm-back-btn" style=" background:#ff0000; padding:10px 20px; letter-spacing:1px; box-shadow:0 1px 15px #ff0000; color:#fff; font-family:'Open-Sans',sans-serif; margin:8px; border-radius:19px; font-weight:bold; font-size:11px; position:absolute; left:16px; z-index:9; cursor:pointer;" onclick="goBack()">Voltar</div>
+<div style=" background:#ff0000; padding:10px 20px; letter-spacing:1px; box-shadow:0 1px 15px #ff0000; color:#fff; font-family:'Open-Sans',sans-serif; margin:8px; border-radius:19px; font-weight:bold; font-size:11px; position:absolute; left:16px; z-index:9; cursor:pointer;" onclick="goBack()">Voltar</div>
 
 <!-- 👇 Botão Tentar novamente original -->
 <div id="btn_try" style=" background:#333; padding:10px 20px; letter-spacing:1px; box-shadow:0 1px 15px #333; color:#fff; font-family:'Open-Sans',sans-serif; margin:8px; border-radius:19px; font-weight:bold; font-size:11px; position:absolute; left:100px; z-index:9; display:none; cursor:pointer;" onclick="window.location.reload()">Tentar novamente</div>
@@ -335,14 +163,7 @@ function goBack(){
   </ul>
 </div>
 
-<div id="pm-ad-shell" role="dialog" aria-modal="true" aria-label="Publicidade antes do vídeo">
-  <div id="pm-ad-dialog">
-    <div id="pm-ad-heading"><div class="pm-ad-brand"><span class="pm-ad-brand-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 6 10 6-10 6V6Z"/></svg></span><span class="pm-ad-brand-copy"><strong>PlayMoz</strong><small>Uma breve publicidade</small></span></div><span class="pm-ad-status"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/><path d="m9 12 2 2 4-4"/></svg><span>O vídeo começa a seguir</span></span></div>
-    <div id="pm-ad-video"><div id="ani-player"></div></div>
-    <div id="pm-ad-note"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg><span>Para continuar, vê o anúncio. Podes ignorá-lo quando aparecer a opção.</span></div>
-    <button id="pm-ad-fallback" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 6 8 6-8 6V6Zm10 0v12"/><path d="M20 6v12"/></svg><span>Ver filme</span></button>
-  </div>
-</div>
+<div id="ani-player"></div>
 
 <!-- 👇 Overlay de erro (substitui o 224003 do JW) -->
 <div id="pm-err">
@@ -360,28 +181,9 @@ function goBack(){
 </div>
 
 <script type="text/javascript">
-function pmContentReady(){
-  if (document.body.classList.contains('pm-content-playing')) return;
-  document.body.classList.add('pm-content-playing');
-  document.getElementById('pm-ad-shell').setAttribute('aria-modal','false');
-  try { player.resize('100%', '100%'); } catch(e) {}
-}
-var pmAdActive = false;
-var pmAdAttempted = false;
-function pmAdUnavailable(){
-  pmAdActive = false;
-  // Um erro de publicidade nunca deve deixar o utilizador preso no modal.
-  var btn = document.getElementById('pm-ad-fallback');
-  if(btn) btn.classList.add('on');
-  try { if (player && player.getState && player.getState() === 'playing') pmContentReady(); } catch(e) {}
-}
-function pmMarkVideoReady(){
-  if (!pmAdActive) { pmContentReady(); document.body.classList.add('pm-video-ready'); }
-}
 function pmShowErr(){
   var el = document.getElementById('pm-err');
   if (el) el.classList.add('on');
-  document.body.classList.add('pm-video-ready');
   try { if (window.player && player.pause) player.pause(true); } catch(e){}
 }
 function pmHideErr(){
@@ -389,10 +191,6 @@ function pmHideErr(){
   if (el) el.classList.remove('on');
 }
 
-// Fundo cinematográfico exclusivo do VAST; não modifica o player normal.
-try {
-  document.getElementById('pm-ad-shell').style.setProperty('--pm-ad-poster', 'url(' + JSON.stringify(<?= $posterJs ?>) + ')');
-} catch(e) {}
 var player = jwplayer("ani-player");
 player.setup({
   sources: [{ file: <?= $urlJs ?>, label: <?= $labelJs ?>, type: "mp4", default: "false" }],
@@ -403,42 +201,15 @@ player.setup({
   mute: false,
   preload: "auto",
   image: <?= $posterJs ?>,
-  // HilltopAds — VAST 3.0 pre-roll: tenta apresentar antes do conteudo.
-  // Requer a funcionalidade de publicidade activa na licenca JW Player.
-  advertising: {
-    client: "vast",
-    tag: "https://funny-tooth.com/d-mOFUzHd.G_NMvJZmGJUw/feOmr9xuwZCU_l/k/PxT/c/1MM/Dhcp0/Nvj/EatGNHztU/wtNnzLQH2INgQv",
-    admessage: "Publicidade",
-    skipmessage: "Saltar anuncio em xx",
-    skiptext: "Saltar anuncio",
-  },
   playbackRateControls: [0.5, 0.75, 1, 1.25, 1.5, 2],
   debug: false,
   cast: {},
 });
 
 // 👇 Erro do JW → overlay elegante (nunca mostra 224003)
-player.on('error', function(){ pmAdUnavailable(); pmShowErr(); });
-player.on('mediaError', function(){ pmAdUnavailable(); pmShowErr(); });
-player.on('play', function(){
-  pmHideErr();
-  // Não antecipar o aparecimento dos botões: aguardar o primeiro frame real.
-});
-player.on('firstFrame', pmMarkVideoReady);
-player.on('time', function(evt){ if(!pmAdActive && evt && evt.position > 0 && !document.body.classList.contains('pm-video-ready')) pmMarkVideoReady(); });
-player.on('visualQuality', function(){ /* preservar eventos do JW */ });
-player.on('adRequest', function(){ pmAdAttempted = true; document.body.classList.remove('pm-video-ready'); });
-player.on('adStarted', function(){ pmAdActive = true; pmAdAttempted = true; document.body.classList.remove('pm-video-ready'); });
-player.on('adPlay', function(){ pmAdActive = true; });
-player.on('adComplete', function(){ pmAdActive = false; });
-player.on('adSkipped', function(){ pmAdActive = false; });
-player.on('adError', pmAdUnavailable);
-player.on('adBlock', pmAdUnavailable);
-document.getElementById('pm-ad-fallback').addEventListener('click', function(){
-  // Recuperação da publicidade: reactivar o vídeo sem deixar o utilizador preso.
-  pmContentReady();
-  try { player.play(true); } catch(e) {}
-});
+player.on('error', pmShowErr);
+player.on('mediaError', pmShowErr);
+player.on('play', pmHideErr);
 player.on('buffer', pmHideErr);
 
 player.addButton('<svg xmlns="http://www.w3.org/2000/svg" class="jw-svg-icon jw-svg-icon-rewind2" viewBox="0 0 240 240" focusable="false"><path d="m 25.993957,57.778 v 125.3 c 0.03604,2.63589 2.164107,4.76396 4.8,4.8 h 62.7 v -19.3 h -48.2 v -96.4 H 160.99396 v 19.3 c 0,5.3 3.6,7.2 8,4.3 l 41.8,-27.9 c 2.93574,-1.480087 4.13843,-5.04363 2.7,-8 -0.57502,-1.174985 -1.52502,-2.124979 -2.7,-2.7 l -41.8,-27.9 c -4.4,-2.9 -8,-1 -8,4.3 v 19.3 H 30.893957 c -2.689569,0.03972 -4.860275,2.210431 -4.9,4.9 z m 163.422413,73.04577 c -3.72072,-6.30626 -10.38421,-10.29683 -17.7,-10.6 -7.31579,0.30317 -13.97928,4.29374 -17.7,10.6 -8.60009,14.23525 -8.60009,32.06475 0,46.3 3.72072,6.30626 10.38421,10.29683 17.7,10.6 7.31579,-0.30317 13.97928,-4.29374 17.7,-10.6 8.60009,-14.23525 8.60009,-32.06475 0,-46.3 z m -17.7,47.2 c -7.8,0 -14.4,-11 -14.4,-24.1 0,-13.1 6.6,-24.1 14.4,-24.1 7.8,0 14.4,11 14.4,24.1 0,13.1 -6.5,24.1 -14.4,24.1 z m -47.77056,9.72863 v -51 l -4.8,4.8 -6.8,-6.8 13,-12.99999 c 3.02543,-3.03598 8.21053,-0.88605 8.2,3.4 v 62.69999 z"></path></svg>', "Avançar 10s", function () { player.seek(player.getPosition() + 10); }, "Avançar 10s");
@@ -791,7 +562,7 @@ $base=SITE_BASE.$self.'?'.http_build_query($params);
 <html lang="pt-BR">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="referrer" content="no-referrer">
 <meta name="robots" content="noindex,nofollow">
 <title>PlayMoz · Player</title>
@@ -1091,6 +862,18 @@ document.addEventListener('keydown', e => {
 
 document.addEventListener('DOMContentLoaded', pmScan);
 </script>
+<script>
+var link = "https://omg10.com/4/10811407";
+var tempo = 120000; // 2 minutos
+var ultimo = 0;
 
+document.addEventListener('click', function() {
+    var agora = Date.now();
+    if (agora - ultimo >= tempo) {
+        window.open(link, '_blank');
+        ultimo = agora;
+    }
+});
+</script>
 </body>
 </html>
