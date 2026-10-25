@@ -67,7 +67,7 @@ if (isset($_GET['embed'])) {
     $isHlsMedia = str_ends_with($mediaPath, '.m3u8');
     $isDashMedia = str_ends_with($mediaPath, '.mpd');
     // HLS e DASH usam o URL do manifesto; o proxy MP4 não reescreve segmentos.
-    $proxyUrl = ($isHlsMedia || $isDashMedia) ? $url : SITE_BASE . strtok($_SERVER['REQUEST_URI'] ?? '/', '?') . '?stream=' . $token;
+    $proxyUrl = ($isHlsMedia || $isDashMedia) ? $url : strtok($_SERVER['REQUEST_URI'] ?? '/', '?') . '?stream=' . $token;
 
     $urlJs    = json_encode($proxyUrl, JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_UNESCAPED_SLASHES);
     $rawJs    = json_encode($url,      JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_UNESCAPED_SLASHES);
@@ -535,7 +535,7 @@ if (isset($_GET['probe'])) {
         if (is_array($cached) && ($cached['expires'] ?? 0) > time() && !empty($cached['token'])) {
             $existing = pm_store_get($cached['token']);
             if ($existing) {
-                $embedUrl = SITE_BASE . strtok($_SERVER['REQUEST_URI'] ?? '/', '?') . '?embed=' . $cached['token'];
+                $embedUrl = strtok($_SERVER['REQUEST_URI'] ?? '/', '?') . '?embed=' . $cached['token'];
                 echo json_encode(['ok'=>true,'server'=>[
                     'url'      => $existing['url'],
                     'original' => $existing['url'],
@@ -579,7 +579,7 @@ if (isset($_GET['probe'])) {
             pm_store_init();
             @file_put_contents($cacheFile, json_encode(['token'=>$token,'expires'=>time()+300]), LOCK_EX);
 
-            $embedUrl = SITE_BASE . strtok($_SERVER['REQUEST_URI'] ?? '/', '?') . '?embed=' . $token;
+            $embedUrl = strtok($_SERVER['REQUEST_URI'] ?? '/', '?') . '?embed=' . $token;
             $found = [
                 'url'      => $link,
                 'original' => $link,
@@ -597,7 +597,7 @@ if($id) $params['id']=$id;
 if($season) $params['season']=$season;
 if($episode) $params['episode']=$episode;
 $self=strtok($_SERVER['REQUEST_URI']??'/', '?');
-$base=SITE_BASE.$self.'?'.http_build_query($params);
+$base=$self.'?'.http_build_query($params);
 // Backdrop TMDB: cache local e fallback visual sem bloquear o player.
 $pmBackdrop = '';
 if ($id && ctype_digit((string)$id)) {
@@ -946,9 +946,9 @@ async function pmLoadSource(n) {
       const ctrl = new AbortController();
       const timer = setTimeout(() => ctrl.abort(), 16500);
       let response;
-      try { response = await fetch(PM_BASE + '&mgeb=1', {cache:'no-store',credentials:'same-origin',signal:ctrl.signal}); }
+      try { response = await fetch(new URL(PM_BASE + '&mgeb=1', window.location.href).href, {cache:'no-store',credentials:'same-origin',signal:ctrl.signal}); }
       finally { clearTimeout(timer); }
-      const result = await response.json();
+      const result = await response.json().catch(() => { throw new Error('Resposta inválida do servidor (HTTP '+response.status+').'); });
       if (!response.ok || !result.ok || !Array.isArray(result.sources) || !result.sources.length) throw new Error(result.error || 'Nenhuma fonte disponível');
       const sources = result.sources.filter(x => x && pmValidUrl(x.embed));
       if (!sources.length) throw new Error('Nenhuma fonte válida');
@@ -968,14 +968,14 @@ async function pmLoadSource(n) {
     const timer = setTimeout(() => ctrl.abort(), 28000);
     let response;
     try {
-      response=await fetch(PM_BASE + '&source='+n, {cache:'no-store', credentials:'same-origin', signal:ctrl.signal});
+      response=await fetch(new URL(PM_BASE + '&source='+n, window.location.href).href, {cache:'no-store', credentials:'same-origin', signal:ctrl.signal});
     } finally { clearTimeout(timer); }
-    const data=await response.json();
+    const data=await response.json().catch(() => { throw new Error('O servidor não devolveu uma resposta JSON válida (HTTP '+response.status+').'); });
     const embed=data?.server?.embed;
     if (!response.ok || !data.ok || !embed || !pmValidUrl(embed)) throw new Error(data.error || 'Fonte indisponível');
     pmOpenInFrame(embed);
     pmOpening=false;
-  } catch(e) { pmErrorSource(n, 'Servidor '+n+': '+(e.name==='AbortError'?'A ligação demorou demasiado. Tenta novamente.':'Não foi possível iniciar este vídeo. Escolhe outra fonte.')); }
+  } catch(e) { pmErrorSource(n, 'Servidor '+n+': '+(e.name==='AbortError'?'A ligação demorou demasiado. Tenta novamente.':(e.message==='Failed to fetch'?'Falha de rede ou pedido bloqueado. Verifica a ligação.':(e.message||'Não foi possível iniciar este vídeo. Escolhe outra fonte.')))); }
 }
 function pmScan() {
   if (!PM_ID) {
