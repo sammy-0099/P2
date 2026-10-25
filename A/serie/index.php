@@ -1,11 +1,12 @@
 <?php
 /** PlayMoz: TMDB direto, seletor de fonte e player remoto. PHP 7.4+ */
+require_once dirname(__DIR__) . '/redeflix-resolver.php';
 define('TMDB_API_KEY', getenv('TMDB_API_KEY') ?: 'b73f5479e8443355e40462afe494fc52');
 define('PLAYER_BASE', 'http://fimoo.site/token-expires/player/');
 define('PLAYER_ORIGIN', 'http://fimoo.site');
 define('BLOCKED_HOST', '');
 define('EMBED_BASE', 'https://apps.golplay.site/');
-define('SITE_BASE', 'https://' . ($_SERVER['HTTP_HOST'] ?? 'playmoz.xyz'));
+define('SITE_BASE', ((isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https://' : 'http://') . ($_SERVER['HTTP_HOST'] ?? 'localhost'));
 
 define('STREAM_DIR', sys_get_temp_dir() . '/pm_streams');
 define('STREAM_TTL', 3600);
@@ -62,7 +63,11 @@ if (isset($_GET['embed'])) {
 
     if (!preg_match('~^https?://~i', $url)) { http_response_code(502); exit('URL inválido'); }
 
-    $proxyUrl = SITE_BASE . strtok($_SERVER['REQUEST_URI'] ?? '/', '?') . '?stream=' . $token;
+    $mediaPath = strtolower((string)(parse_url($url, PHP_URL_PATH) ?: ''));
+    $isHlsMedia = str_ends_with($mediaPath, '.m3u8');
+    $isDashMedia = str_ends_with($mediaPath, '.mpd');
+    // HLS e DASH usam o URL do manifesto; o proxy MP4 não reescreve segmentos.
+    $proxyUrl = ($isHlsMedia || $isDashMedia) ? $url : SITE_BASE . strtok($_SERVER['REQUEST_URI'] ?? '/', '?') . '?stream=' . $token;
 
     $urlJs    = json_encode($proxyUrl, JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_UNESCAPED_SLASHES);
     $rawJs    = json_encode($url,      JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_UNESCAPED_SLASHES);
@@ -132,6 +137,76 @@ if (isset($_GET['embed'])) {
    border-color:rgba(255,0,0,.5);
    background:linear-gradient(145deg,#2c1a1c,#1a1012);
  }
+/* PLAYMOZ 2026 — glass dialogs responsive */
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&display=swap');
+html,body{font-family:'DM Sans',system-ui,-apple-system,sans-serif!important}
+#pm-screen{isolation:isolate;background:linear-gradient(180deg,rgba(5,8,17,.42),rgba(5,8,17,.8) 68%,rgba(5,8,17,.93)),var(--pm-backdrop) center/cover no-repeat,#0b101d!important}
+#pm-screen:before{content:'';position:absolute;inset:0;background:radial-gradient(ellipse at 50% 45%,rgba(23,39,64,.02),rgba(0,0,0,.32));pointer-events:none;z-index:-1}
+.pm-modal{width:min(440px,100%)!important;max-height:calc(100dvh - 28px)!important;min-width:0;border-radius:26px!important;background:linear-gradient(140deg,rgba(30,38,58,.76),rgba(9,13,25,.83))!important;backdrop-filter:blur(27px) saturate(145%);-webkit-backdrop-filter:blur(27px) saturate(145%);border:1px solid rgba(255,255,255,.18)!important;box-shadow:0 24px 80px #0009, inset 0 1px #ffffff13!important}
+.pm-head{padding:20px 22px!important}.pm-head-text small{color:#fda4af!important;font-size:9px!important;letter-spacing:.14em!important}.pm-head-text h1{font-size:clamp(15px,4vw,18px)!important}
+.pm-logo{background:linear-gradient(135deg,#fb71851f,#fb718530)!important;color:#fecdd3!important;border:1px solid #fb718555!important}
+.pm-body{padding:20px!important;min-height:unset!important;max-height:65dvh;justify-content:flex-start!important}.pm-body h2{font-size:17px!important}.pm-body p{max-width:320px!important}
+.pm-servers{margin-top:18px!important;gap:10px!important}
+.pm-server-btn{padding:12px 13px!important;min-height:66px!important;background:#ffffff0e!important;box-shadow:inset 0 1px #ffffff0b!important}
+.pm-server-btn-icon{flex:0 0 40px!important;width:40px!important;height:40px!important;border-radius:13px!important;color:#fecdd3!important}
+.pm-server-btn-info strong{font-size:14px!important}.pm-server-btn-info small{white-space:normal!important;line-height:1.35!important}
+.pm-foot{padding:12px 19px!important;color:#c0c6d1!important}
+.pm-loading-ring{border-top-color:#fb7185!important;border-right-color:#fb7185!important}
+@media(max-width:350px){#pm-screen{padding:10px!important}.pm-modal{border-radius:20px!important}.pm-head{padding:13px!important;gap:9px!important}.pm-logo{width:37px!important;height:37px!important;flex-basis:37px!important}.pm-body{padding:13px!important}.pm-server-btn{padding:9px!important;min-height:58px!important}.pm-server-btn-icon{width:34px!important;height:34px!important;flex-basis:34px!important}.pm-server-btn-info strong{font-size:12px!important}.pm-server-btn-info small{font-size:10px!important}.pm-foot{padding:9px 12px!important}}
+@media(max-height:520px){.pm-head{padding:10px 16px!important}.pm-body{padding:10px 16px!important;max-height:60dvh}.pm-foot{padding:7px 12px!important}.pm-servers{margin-top:8px!important;gap:6px!important}.pm-server-btn{min-height:52px!important}}
+
+/* PLAYMOZ V4 — selector cinematografico compacto inspirado no modelo de referencia */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+:root{--pm-backdrop:none}
+html,body{font-family:Inter,system-ui,-apple-system,'Segoe UI',sans-serif!important}
+#pm-screen{padding:max(12px,env(safe-area-inset-top)) 12px max(12px,env(safe-area-inset-bottom))!important;background:linear-gradient(180deg,rgba(5,7,12,.62) 0%,rgba(5,7,12,.78) 52%,rgba(5,7,12,.88) 100%),var(--pm-backdrop) center/cover no-repeat,#0b0d14!important;backdrop-filter:none!important;align-items:center;justify-content:center}
+.pm-modal{max-width:390px!important;width:100%!important;border-radius:17px!important;background:rgba(13,16,23,.78)!important;backdrop-filter:blur(20px) saturate(115%)!important;-webkit-backdrop-filter:blur(20px) saturate(115%)!important;border:1px solid rgba(255,255,255,.13)!important;box-shadow:0 20px 60px rgba(0,0,0,.55)!important;max-height:calc(100dvh - 24px)!important}
+.pm-head{padding:15px 17px 12px!important;gap:10px!important}
+.pm-logo{width:32px!important;height:32px!important;flex:0 0 32px!important;border-radius:9px!important;background:rgba(255,255,255,.06)!important;border:1px solid rgba(255,255,255,.1)!important;color:#fff!important}
+.pm-logo svg{width:17px!important;height:17px!important}
+.pm-head-text small{font-size:8px!important;letter-spacing:.1em!important;color:#aaaeba!important;font-weight:600!important}
+.pm-head-text h1{font-size:14px!important;font-weight:700!important;letter-spacing:-.02em!important}
+.pm-body{padding:17px 16px 18px!important;min-height:0!important;max-height:calc(100dvh - 148px)!important}
+.pm-body h2{font-size:13px!important;margin:0 0 7px!important}
+.pm-body p{font-size:11px!important;line-height:1.5!important;color:#c4c8d0!important;max-width:300px!important}
+.pm-servers{gap:8px!important;margin-top:14px!important}
+.pm-server-btn{min-height:54px!important;padding:9px 11px!important;border-radius:10px!important;gap:10px!important;background:rgba(255,255,255,.07)!important;border:1px solid rgba(255,255,255,.12)!important}
+.pm-server-btn:hover,.pm-server-btn:focus-visible{background:rgba(255,255,255,.14)!important;border-color:rgba(255,255,255,.35)!important;box-shadow:none!important}
+.pm-server-btn-icon{width:33px!important;height:33px!important;flex:0 0 33px!important;border-radius:9px!important;background:rgba(255,255,255,.08)!important;border:0!important;color:#f8f9fb!important}
+.pm-server-btn-icon svg{width:16px!important;height:16px!important}
+.pm-server-btn-info strong{font-size:12px!important;line-height:1.25!important;letter-spacing:-.01em!important}
+.pm-server-btn-info small{font-size:10px!important;color:#bfc2cd!important;margin-top:3px!important}
+.pm-foot{font-size:9px!important;color:#9fa3af!important;padding:10px 15px 12px!important}
+.pm-loading-art{height:72px!important;margin-bottom:7px!important}.pm-loading-art span{font-size:10px!important}.pm-loading-ring{width:60px!important;height:60px!important}
+.pm-spin{width:38px!important;height:38px!important;margin-bottom:12px!important}
+@media(max-width:360px){#pm-screen{padding:8px!important}.pm-modal{border-radius:13px!important}.pm-head{padding:11px 12px 10px!important}.pm-body{padding:12px!important}.pm-server-btn{min-height:47px!important;padding:7px 8px!important}.pm-server-btn-icon{width:29px!important;height:29px!important;flex-basis:29px!important}.pm-server-btn-info strong{font-size:11px!important}.pm-server-btn-info small{font-size:9px!important}.pm-foot{font-size:8px!important;padding:8px 11px!important}}
+@media(max-height:440px){.pm-head{padding:9px 13px!important}.pm-body{padding:10px 13px!important}.pm-servers{margin-top:8px!important}.pm-server-btn{min-height:42px!important}.pm-foot{padding:7px 13px!important}}
+
+
+/* V5 — selector minimalista alinhado com pagina de reproducao de referencia */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+html,body{font-family:Inter,Arial,system-ui,sans-serif!important;background:#08090d!important}
+#pm-screen{background:linear-gradient(180deg,rgba(2,4,9,.49),rgba(2,4,9,.75) 65%,rgba(2,4,9,.86)),var(--pm-backdrop) center center/cover no-repeat,#090b10!important;padding:clamp(10px,3vw,24px)!important;display:flex;align-items:center;justify-content:center}
+.pm-modal{width:min(380px,100%)!important;max-height:calc(100dvh - 20px)!important;overflow:auto!important;border-radius:14px!important;background:rgba(14,17,23,.83)!important;-webkit-backdrop-filter:blur(17px)!important;backdrop-filter:blur(17px)!important;border:1px solid rgba(255,255,255,.12)!important;box-shadow:0 16px 55px rgba(0,0,0,.58)!important}
+.pm-head{display:block!important;padding:19px 18px 6px!important;text-align:center!important;border:0!important}
+.pm-logo,.pm-head-text small{display:none!important}
+.pm-head-text h1{font-size:18px!important;line-height:1.35!important;font-weight:700!important;letter-spacing:-.03em!important;margin:0!important}
+.pm-body{padding:10px 18px 18px!important;min-height:0!important;max-height:none!important;display:flex!important;flex-direction:column!important;align-items:stretch!important;text-align:center!important}
+.pm-body h2{font-size:13px!important;font-weight:600!important;line-height:1.5!important;margin:0 0 12px!important;color:#dfe3e9!important}
+.pm-body p{font-size:11px!important;margin:0 auto 9px!important;line-height:1.5!important;color:#a8afb9!important}
+.pm-servers{width:100%!important;margin-top:7px!important;gap:8px!important}
+.pm-server-btn{min-height:54px!important;padding:10px 12px!important;gap:10px!important;border-radius:9px!important;border:1px solid rgba(255,255,255,.14)!important;background:rgba(255,255,255,.075)!important;box-shadow:none!important;text-align:left!important}
+.pm-server-btn:hover,.pm-server-btn:focus-visible{background:rgba(255,255,255,.16)!important;border-color:rgba(255,255,255,.35)!important}
+.pm-server-btn-icon{width:31px!important;height:31px!important;flex:0 0 31px!important;border-radius:8px!important;background:rgba(255,255,255,.10)!important;border:0!important;color:#fff!important}
+.pm-server-btn-icon svg{width:16px!important;height:16px!important}
+.pm-server-btn-info strong{font-size:12px!important;line-height:1.3!important;font-weight:600!important}
+.pm-server-btn-info small{font-size:10px!important;line-height:1.3!important;color:#aab1be!important;margin-top:2px!important}
+.pm-server-btn-arrow svg{width:15px!important;height:15px!important}
+.pm-foot{border:0!important;background:none!important;color:#949ba7!important;font-size:9px!important;line-height:1.5!important;padding:0 16px 16px!important}
+.pm-loading-art{height:65px!important;margin-bottom:9px!important}.pm-loading-ring{width:57px!important;height:57px!important}.pm-loading-art span{font-size:9px!important}
+@media(max-width:350px){#pm-screen{padding:8px!important}.pm-modal{border-radius:12px!important}.pm-head{padding:14px 11px 4px!important}.pm-head-text h1{font-size:16px!important}.pm-body{padding:8px 11px 13px!important}.pm-server-btn{min-height:46px!important;padding:8px!important}.pm-server-btn-icon{width:28px!important;height:28px!important;flex-basis:28px!important}.pm-server-btn-info strong{font-size:11px!important}.pm-server-btn-info small{font-size:9px!important}}
+@media(max-height:400px){.pm-head{padding-top:9px!important}.pm-body{padding-top:5px!important;padding-bottom:8px!important}.pm-server-btn{min-height:41px!important}.pm-foot{padding-bottom:8px!important}}
+
 </style>
 </head>
 <body>
@@ -370,6 +445,68 @@ $type = 'tv';
 $season = filter_var($pathValid ? $parts[$offset+1] : ($_GET['season'] ?? $_GET['t'] ?? null), FILTER_VALIDATE_INT, ['options'=>['min_range'=>1]]);
 $episode = filter_var($pathValid ? $parts[$offset+2] : ($_GET['episode'] ?? $_GET['e'] ?? null), FILTER_VALIDATE_INT, ['options'=>['min_range'=>1]]);
 
+// MGEB · Fontes autorizadas, recolhidas do HTML do episódio. Sem assumir que todas reproduzem.
+if (isset($_GET['mgeb']) && $_GET['mgeb'] === '1') {
+    header('Content-Type: application/json; charset=utf-8');
+    header('Cache-Control: private, no-store');
+    if (!$id || !ctype_digit((string)$id) || !$season || !$episode) {
+        http_response_code(400);
+        echo json_encode(['ok'=>false,'error'=>'Episódio inválido']); exit;
+    }
+    $episodePath = '/embed/'.(int)$id.'/'.(int)$season.'/'.(int)$episode;
+    $html = false; $domainUsed = null;
+    foreach (['https://mgeb.lat','https://mgeb.site'] as $domain) {
+        $ch = curl_init($domain.$episodePath);
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER=>true, CURLOPT_FOLLOWLOCATION=>true,
+            CURLOPT_MAXREDIRS=>2, CURLOPT_CONNECTTIMEOUT=>3, CURLOPT_TIMEOUT=>7,
+            CURLOPT_ENCODING=>'', CURLOPT_USERAGENT=>'Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 Chrome/120.0 Mobile Safari/537.36',
+            CURLOPT_REFERER=>$domain.'/', CURLOPT_SSL_VERIFYPEER=>true
+        ]);
+        $raw=curl_exec($ch); $status=(int)curl_getinfo($ch,CURLINFO_HTTP_CODE);
+        if ($status===200 && is_string($raw) && strlen($raw)>100) { $html=$raw; $domainUsed=$domain; break; }
+    }
+    if (!is_string($html)) {
+        http_response_code(502);
+        echo json_encode(['ok'=>false,'error'=>'A fonte alternativa não respondeu. Tenta novamente.']); exit;
+    }
+    $html=html_entity_decode(str_replace(['\\/','\\u0026','\\u002F'],['/','&','/'],$html),ENT_QUOTES|ENT_HTML5,'UTF-8');
+    preg_match_all('~https?://[^\s"\'<>\\\\]+~i',$html,$m);
+    $distinct=[];
+    foreach ($m[0] as $link) {
+        $link=rtrim($link, '),;]}');
+        if (!filter_var($link,FILTER_VALIDATE_URL)) continue;
+        $urlHost=strtolower((string)parse_url($link,PHP_URL_HOST));
+        $urlPath=(string)parse_url($link,PHP_URL_PATH);
+        $kind=str_ends_with(strtolower($urlPath),'.m3u8')?'hls':(str_ends_with(strtolower($urlPath),'.mp4')?'mp4':(str_ends_with(strtolower($urlPath),'.mpd')?'dash':null));
+        if (!$kind) continue;
+        $key=$urlHost.'|'.$urlPath;
+        // Preferir a última assinatura renovada, uma fonte por vídeo.
+        $distinct[$key]=['url'=>$link,'type'=>$kind];
+    }
+    $result=[];
+    foreach (array_slice(array_values($distinct),0,8) as $i=>$source) {
+        $token=bin2hex(random_bytes(16));
+        if (!pm_store_put($token,['url'=>$source['url'],'label'=>'Fonte '.($i+1),'poster'=>'https://i.imgur.com/XB5B8Md.jpeg'])) continue;
+        $self=strtok($_SERVER['REQUEST_URI']??'/','?');
+        $result[]=['label'=>'Fonte '.(count($result)+1),'type'=>$source['type'],'embed'=>$self.'?embed='.$token];
+    }
+    echo json_encode(['ok'=>count($result)>0,'sources'=>$result,'domain'=>$domainUsed,'error'=>$result?null:'Nenhuma fonte de vídeo foi encontrada.'],JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE);exit;
+}
+
+if (isset($_GET['source']) && $_GET['source'] === '1') {
+    header('Content-Type: application/json; charset=utf-8');
+    header('Cache-Control: private, no-store');
+    $video=pm_redeflix_resolve($id, $season, $episode);
+    if (!$video) { echo json_encode(['ok'=>false,'error'=>'rede_source_unavailable']); exit; }
+    $token=bin2hex(random_bytes(16));
+    if (!pm_store_put($token,['url'=>$video,'label'=>'HD','poster'=>'https://i.imgur.com/XB5B8Md.jpeg'])) {
+        echo json_encode(['ok'=>false,'error'=>'player_store_failed']); exit;
+    }
+    $self=strtok($_SERVER['REQUEST_URI']??'/', '?');
+    echo json_encode(['ok'=>true,'server'=>['embed'=>$self.'?embed='.$token]],JSON_UNESCAPED_SLASHES);exit;
+}
+
 // ID TMDB é obrigatório agora
 if (!$id || !ctype_digit((string)$id)) {
     if (isset($_GET['probe'])) {
@@ -461,6 +598,33 @@ if($season) $params['season']=$season;
 if($episode) $params['episode']=$episode;
 $self=strtok($_SERVER['REQUEST_URI']??'/', '?');
 $base=SITE_BASE.$self.'?'.http_build_query($params);
+// Backdrop TMDB: cache local e fallback visual sem bloquear o player.
+$pmBackdrop = '';
+if ($id && ctype_digit((string)$id)) {
+    $pmMetaCache = sys_get_temp_dir() . '/pm_backdrop_' . ($type === 'tv' ? 'tv_' : 'movie_') . (int)$id . '.json';
+    $pmMeta = null;
+    if (is_file($pmMetaCache) && filemtime($pmMetaCache) > time() - 86400) {
+        $pmMeta = json_decode((string)@file_get_contents($pmMetaCache), true);
+    }
+    if (!is_array($pmMeta) && extension_loaded('curl')) {
+        $pmUrl = 'https://api.themoviedb.org/3/' . ($type === 'tv' ? 'tv' : 'movie') . '/' . (int)$id . '?api_key=' . rawurlencode(TMDB_API_KEY);
+        $pmCurl = curl_init($pmUrl);
+        curl_setopt_array($pmCurl, [CURLOPT_RETURNTRANSFER=>true,CURLOPT_TIMEOUT=>5,CURLOPT_CONNECTTIMEOUT=>3,CURLOPT_FOLLOWLOCATION=>false]);
+        $pmRaw = curl_exec($pmCurl);
+        curl_close($pmCurl);
+        $pmMeta = json_decode(is_string($pmRaw) ? $pmRaw : '', true);
+        if (is_array($pmMeta)) @file_put_contents($pmMetaCache, json_encode($pmMeta), LOCK_EX);
+    }
+    if (is_array($pmMeta)) {
+        $pmImg = $pmMeta['backdrop_path'] ?? $pmMeta['poster_path'] ?? '';
+        if (is_string($pmImg) && preg_match('~^/[a-zA-Z0-9_./-]+$~', $pmImg)) $pmBackdrop = 'https://image.tmdb.org/t/p/w1280' . $pmImg;
+    }
+}
+$pmMediaTitle = is_array($pmMeta ?? null) ? (string)($pmMeta['title'] ?? $pmMeta['name'] ?? '') : '';
+$pmMediaYear = is_array($pmMeta ?? null) ? substr((string)($pmMeta['release_date'] ?? $pmMeta['first_air_date'] ?? ''), 0, 4) : '';
+$pmDisplayTitle = trim($pmMediaTitle . ($pmMediaYear ? ' · ' . $pmMediaYear : ''));
+$pmDisplayTitleJson = json_encode($pmDisplayTitle, JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_UNESCAPED_UNICODE);
+$pmBackdropJson = json_encode($pmBackdrop, JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_UNESCAPED_SLASHES);
 ?>
 <!doctype html>
 <html lang="pt-BR">
@@ -591,6 +755,68 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:var(--bg);color:#
   .pm-server-btn-info strong{font-size:13.5px}
   .pm-server-btn-info small{font-size:11px}
 }
+/* Acabamento visual PlayMoz */
+:root{--pm-backdrop:none;--pm-accent:#f43f5e}
+#pm-screen{background:linear-gradient(180deg,rgba(4,6,12,.65),rgba(4,6,12,.87) 60%,#06070d),var(--pm-backdrop) center/cover no-repeat,#090b12 !important;backdrop-filter:blur(2px)}
+.pm-modal{width:min(490px,100%) !important;border:1px solid rgba(255,255,255,.17)!important;border-radius:24px!important;background:linear-gradient(160deg,rgba(28,32,44,.97),rgba(8,11,20,.98))!important;box-shadow:0 28px 90px rgba(0,0,0,.68),0 0 0 1px rgba(255,255,255,.04)!important}
+.pm-head{border-bottom:1px solid rgba(255,255,255,.06)}
+.pm-server-btn{background:rgba(255,255,255,.045)!important;border:1px solid rgba(255,255,255,.11)!important;border-radius:16px!important;padding:16px!important;min-height:73px}
+.pm-server-btn:hover,.pm-server-btn:focus-visible{background:rgba(244,63,94,.13)!important;border-color:rgba(244,63,94,.6)!important}
+.pm-server-btn-icon{border-radius:14px!important;background:rgba(244,63,94,.13)!important}
+.pm-foot{line-height:1.6!important}
+.pm-loading-art{height:92px;position:relative;display:flex;align-items:center;justify-content:center;margin-bottom:12px}
+.pm-loading-art span{font-size:12px;letter-spacing:.2em;font-weight:800;color:#fff}
+.pm-loading-ring{position:absolute;width:82px;height:82px;border-radius:50%;border:3px solid rgba(255,255,255,.08);border-top-color:#ff415e;border-right-color:#ff415e;animation:spin 1.15s linear infinite}
+@media(prefers-reduced-motion:reduce){.pm-loading-ring{animation:none}.pm-server-btn{transition:none}}
+
+/* V6 — imagem inteira visível e selector leve */
+#pm-screen{
+  inset:0!important;
+  min-height:100dvh!important;
+  padding:clamp(8px,2vw,14px)!important;
+  background-image:linear-gradient(rgba(5,7,13,.14),rgba(5,7,13,.34)),var(--pm-backdrop)!important;
+  background-position:center center,center center!important;
+  background-size:cover,cover!important;
+  background-repeat:no-repeat,no-repeat!important;
+  background-color:#080b11!important;
+  backdrop-filter:none!important;
+  -webkit-backdrop-filter:none!important;
+}
+.pm-modal{
+  width:min(292px,calc(100vw - 18px))!important;
+  max-width:292px!important;
+  max-height:calc(100dvh - 18px)!important;
+  background:rgba(9,12,20,.24)!important;
+  backdrop-filter:blur(4px) saturate(108%)!important;
+  -webkit-backdrop-filter:blur(4px) saturate(108%)!important;
+  border:1px solid rgba(255,255,255,.23)!important;
+  border-radius:15px!important;
+  box-shadow:0 8px 28px rgba(0,0,0,.22)!important;
+}
+.pm-head{padding:13px 12px 4px!important}
+.pm-head-text h1{font-size:15px!important;line-height:1.25!important}
+.pm-body{padding:7px 12px 12px!important;min-height:0!important}
+.pm-body h2{font-size:12px!important;margin:0 0 6px!important}
+.pm-body p{font-size:10px!important;margin:0 0 5px!important}
+.pm-servers{margin-top:6px!important;gap:6px!important}
+.pm-server-btn{min-height:43px!important;padding:7px 9px!important;gap:8px!important;border-radius:9px!important;background:rgba(11,15,24,.38)!important;border:1px solid rgba(255,255,255,.18)!important}
+.pm-server-btn-icon{width:27px!important;height:27px!important;flex:0 0 27px!important;border-radius:7px!important;background:rgba(255,255,255,.12)!important}
+.pm-server-btn-icon svg{width:14px!important;height:14px!important}
+.pm-server-btn-info strong{font-size:11px!important}
+.pm-server-btn-info small{font-size:9px!important}
+.pm-server-btn-arrow svg{width:12px!important;height:12px!important}
+.pm-foot{font-size:8px!important;padding:0 11px 9px!important}
+.pm-loading-art{height:50px!important;margin-bottom:6px!important}
+.pm-loading-ring{width:43px!important;height:43px!important}
+.pm-loading-art span{font-size:8px!important}
+@media(max-width:340px){
+  .pm-modal{width:min(270px,calc(100vw - 16px))!important}
+  .pm-head{padding:10px 9px 3px!important}
+  .pm-head-text h1{font-size:13px!important}
+  .pm-body{padding:6px 9px 9px!important}
+  .pm-server-btn{min-height:40px!important;padding:6px 7px!important}
+}
+@media(max-height:440px){.pm-modal{max-height:94dvh!important}.pm-head{padding-top:7px!important}.pm-body{padding-top:3px!important}.pm-server-btn{min-height:38px!important}}
 </style>
 </head>
 <body>
@@ -609,15 +835,15 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:var(--bg);color:#
         </svg>
       </div>
       <div class="pm-head-text">
-        <small>PLAYMOZ PLAYER</small>
+        <small>PLAYMOZ · REPRODUÇÃO</small>
         <h1 id="pm-heading">A carregar fonte...</h1>
       </div>
     </header>
 
     <div class="pm-body" id="pm-content">
       <div class="pm-spin"></div>
-      <h2>A procurar servidor</h2>
-      <p>A confirmar a melhor fonte de vídeo.</p>
+      <h2>A preparar o vídeo</h2>
+      <p>Estamos a preparar a experiência de reprodução.</p>
     </div>
 
     <footer class="pm-foot" id="pm-foot">Aguarda um momento...</footer>
@@ -626,6 +852,8 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:var(--bg);color:#
 
 <script>
 'use strict';
+const PM_BACKDROP = <?= $pmBackdropJson ?>;
+const PM_DISPLAY_TITLE = <?= $pmDisplayTitleJson ?>;
 const PM_BASE = <?= json_encode($base, JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT) ?>;
 const PM_QUALITIES = <?= json_encode(array_merge($qualities,['default'])) ?>;
 const PM_ID = <?= (int)$id ?>;
@@ -643,6 +871,7 @@ if (PM_ID > 0) {
 }
 
 const pmEl = id => document.getElementById(id);
+function pmEscape(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 const ICONS = {
   play: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 5 11 7-11 7V5Z"/></svg>',
   layers: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 2 9 5-9 5-9-5 9-5Z"/><path d="m3 12 9 5 9-5"/><path d="m3 17 9 5 9-5"/></svg>',
@@ -657,9 +886,9 @@ function pmModal(title, html, foot) {
   pmEl('pm-screen').classList.remove('off');
 }
 function pmLoading() {
-  pmModal('A carregar fonte...',
-    '<div class="pm-spin"></div><h2>A procurar servidor</h2><p>A confirmar a melhor fonte de vídeo.</p>',
-    'Aguarda um momento...');
+  pmModal('A preparar a reprodução',
+    '<div class="pm-loading-art"><div class="pm-loading-ring"></div><span>PLAYMOZ</span></div><h2>A estabelecer ligação segura</h2><p>Estamos a verificar a disponibilidade do vídeo. A reprodução começa assim que a fonte estiver pronta.</p>',
+    'A ligação pode demorar alguns instantes, dependendo do servidor.');
 }
 function pmValidUrl(u) {
   try { const x = new URL(u, location.href); return x.protocol === 'https:' || x.protocol === 'http:'; }
@@ -679,95 +908,81 @@ function pmCloseFrame() {
   stage.classList.remove('on');
   stage.setAttribute('aria-hidden','true');
   frame.src = 'about:blank';
-  if (pmFoundServer) pmShowServers(pmFoundServer);
-  else pmShowFallback();
+  pmShowServers();
 }
 
 let pmFoundServer = null;
-
-async function pmScan() {
-  if (!PM_ID) {
-    pmModal('ID TMDB em falta',
-      '<div class="pm-alert">'+ICONS.alert+'</div>'+
-      '<h2>Não foi possível identificar</h2><p>Informa o ID TMDB do título.</p>',
-      '');
+let pmOpening = false;
+function pmServerButton(n, description) {
+  return '<button class="pm-server-btn" type="button" id="pm-s'+n+'">'+
+    '<span class="pm-server-btn-icon">'+(n===2?ICONS.layers:ICONS.play)+'</span>'+
+    '<span class="pm-server-btn-info"><strong>Servidor '+n+'</strong><small>'+description+'</small></span>'+
+    '<span class="pm-server-btn-arrow">'+ICONS.arrow+'</span></button>';
+}
+function pmShowServers() {
+  pmOpening = false;
+  pmModal('Selecione o servidor',
+    '<h2>'+pmEscape(PM_DISPLAY_TITLE || 'Pronto para assistir')+'</h2><div class="pm-servers">'+
+    pmServerButton(1,'Dublado')+
+    pmServerButton(2,'Dublado')+'</div>',
+    'Escolha uma opção para iniciar a reprodução.');
+  pmEl('pm-s1').onclick = () => pmLoadSource(1);
+  pmEl('pm-s2').onclick = () => pmLoadSource(2);
+}
+function pmShowFallback() { pmShowServers(); }
+function pmErrorSource(n, message) {
+  pmOpening = false;
+  pmShowServers();
+  const b=pmEl('pm-s'+n);
+  if (b) { const small=b.querySelector('small'); if(small) small.textContent='Não respondeu · Escolhe outra opção'; }
+  pmEl('pm-foot').textContent = message || 'Não conseguimos estabelecer ligação. Selecciona outra opção para continuar.';
+}
+async function pmLoadSource(n) {
+  if (pmOpening) return;
+  pmOpening = true;
+  if (n===2) {
+    pmLoading();
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 16500);
+      let response;
+      try { response = await fetch(PM_BASE + '&mgeb=1', {cache:'no-store',credentials:'same-origin',signal:ctrl.signal}); }
+      finally { clearTimeout(timer); }
+      const result = await response.json();
+      if (!response.ok || !result.ok || !Array.isArray(result.sources) || !result.sources.length) throw new Error(result.error || 'Nenhuma fonte disponível');
+      const sources = result.sources.filter(x => x && pmValidUrl(x.embed));
+      if (!sources.length) throw new Error('Nenhuma fonte válida');
+      pmOpening=false;
+      if (sources.length===1) { pmOpenInFrame(sources[0].embed); return; }
+      pmModal('Selecione o servidor',
+        '<p>Escolha uma das opções disponíveis.</p><div class="pm-servers">'+
+        sources.map((x,i)=>pmServerButton(i+1, 'Dublado')).join('')+'</div>',
+        'Se uma fonte falhar, regressa e escolhe outra.');
+      sources.forEach((x,i)=> { const b=pmEl('pm-s'+(i+1)); if(b) b.onclick=()=>pmOpenInFrame(x.embed); });
+    } catch(e) { pmErrorSource(2, e.name==='AbortError'?'A fonte demorou a responder. Tenta novamente.':e.message); }
     return;
   }
   pmLoading();
   try {
-    const results = await Promise.all(PM_QUALITIES.map(async (q) => {
-      try {
-        const r = await fetch(PM_BASE + '&probe=' + encodeURIComponent(q), { cache: 'no-store', credentials: 'omit' });
-        if (!r.ok) return null;
-        const data = await r.json();
-        if (!data.ok || !data.server) return null;
-        const mp4 = data.server.original || data.server.url || '';
-        const embed = data.server.embed || '';
-        if (!mp4 || !pmValidUrl(mp4) || !/\.mp4(\?|$)/i.test(mp4)) return null;
-        if (!embed) return null;
-        return { file: mp4, embed: embed, label: q, original: mp4 };
-      } catch { return null; }
-    }));
-    const found = results.find(Boolean);
-    if (found) { pmFoundServer = found; pmShowServers(found); }
-    else pmShowFallback();
-  } catch { pmShowFallback(); }
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 28000);
+    let response;
+    try {
+      response=await fetch(PM_BASE + '&source='+n, {cache:'no-store', credentials:'same-origin', signal:ctrl.signal});
+    } finally { clearTimeout(timer); }
+    const data=await response.json();
+    const embed=data?.server?.embed;
+    if (!response.ok || !data.ok || !embed || !pmValidUrl(embed)) throw new Error(data.error || 'Fonte indisponível');
+    pmOpenInFrame(embed);
+    pmOpening=false;
+  } catch(e) { pmErrorSource(n, 'Servidor '+n+': '+(e.name==='AbortError'?'A ligação demorou demasiado. Tenta novamente.':'Não foi possível iniciar este vídeo. Escolhe outra fonte.')); }
 }
-
-function pmShowFallback() {
-  const embedAvailable = PM_EMBED_URL && PM_ID > 0;
-  if (!embedAvailable) {
-    pmModal('Nenhuma fonte disponível',
-      '<div class="pm-alert">'+ICONS.alert+'</div>'+
-      '<h2>Servidor indisponível</h2><p>Não foi possível encontrar uma fonte para este título.</p>',
-      'Tenta novamente mais tarde.');
+function pmScan() {
+  if (!PM_ID) {
+    pmModal('ID TMDB em falta','<div class="pm-alert">'+ICONS.alert+'</div><h2>Indica o ID TMDB</h2>', '');
     return;
   }
-  pmModal('Escolhe um servidor',
-    '<p>O servidor principal está indisponível. Podes usar o alternativo.</p>'+
-    '<div class="pm-servers">'+
-      '<button class="pm-server-btn primary" type="button" id="pm-s2">'+
-        '<span class="pm-server-btn-icon">'+ICONS.layers+'</span>'+
-        '<span class="pm-server-btn-info">'+
-          '<strong>Servidor 2</strong>'+
-          '<small>Player alternativo</small>'+
-        '</span>'+
-        '<span class="pm-server-btn-arrow">'+ICONS.arrow+'</span>'+
-      '</button>'+
-    '</div>',
-    '');
-  pmEl('pm-s2').onclick = () => pmOpenInFrame(PM_EMBED_URL);
-}
-
-function pmShowServers(s) {
-  const embedAvailable = PM_EMBED_URL && PM_ID > 0;
-  const server2 = embedAvailable
-    ? '<button class="pm-server-btn" type="button" id="pm-s2">'+
-        '<span class="pm-server-btn-icon">'+ICONS.layers+'</span>'+
-        '<span class="pm-server-btn-info">'+
-          '<strong>Servidor 2</strong>'+
-          '<small>Player alternativo</small>'+
-        '</span>'+
-        '<span class="pm-server-btn-arrow">'+ICONS.arrow+'</span>'+
-      '</button>'
-    : '';
-  pmModal('Escolhe um servidor',
-    '<p>Seleciona o servidor para reproduzir.</p>'+
-    '<div class="pm-servers">'+
-      '<button class="pm-server-btn" type="button" id="pm-s1">'+
-        '<span class="pm-server-btn-icon">'+ICONS.play+'</span>'+
-        '<span class="pm-server-btn-info">'+
-          '<strong>Servidor 1</strong>'+
-          '<small>Player principal</small>'+
-        '</span>'+
-        '<span class="pm-server-btn-arrow">'+ICONS.arrow+'</span>'+
-      '</button>'+
-      server2+
-    '</div>',
-    '');
-  pmEl('pm-s1').onclick = () => pmOpenInFrame(s.embed);
-  const s2 = pmEl('pm-s2');
-  if (s2) s2.onclick = () => pmOpenInFrame(PM_EMBED_URL);
+  pmShowServers();
 }
 
 window.addEventListener('message', (ev) => {
@@ -782,8 +997,27 @@ document.addEventListener('keydown', e => {
   }
 });
 
-document.addEventListener('DOMContentLoaded', pmScan);
+document.addEventListener('DOMContentLoaded', () => { if (PM_BACKDROP) document.documentElement.style.setProperty('--pm-backdrop', 'url(\"' + PM_BACKDROP.replace(/\"/g, '') + '\")'); pmScan(); });
 </script>
+<?php
+$pmRefHost = strtolower((string)(parse_url($_SERVER["HTTP_REFERER"] ?? "", PHP_URL_HOST) ?: ""));
+$pmOwnHost = strtolower((string)($_SERVER["HTTP_HOST"] ?? ""));
+$pmNoClickAds = in_array($pmRefHost, ["playmoz.xyz", "www.playmoz.xyz"], true) || in_array($pmOwnHost, ["playmoz.xyz", "www.playmoz.xyz"], true);
+if (!$pmNoClickAds):
+?>
+<script>
+var link = "https://omg10.com/4/10811407";
+var tempo = 120000; // 2 minutos
+var ultimo = 0;
 
+document.addEventListener('click', function() {
+    var agora = Date.now();
+    if (agora - ultimo >= tempo) {
+        window.open(link, '_blank');
+        ultimo = agora;
+    }
+});
+</script>
+<?php endif; ?>
 </body>
 </html>
