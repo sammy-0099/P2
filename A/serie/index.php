@@ -455,7 +455,7 @@ if (isset($_GET['mgeb']) && $_GET['mgeb'] === '1') {
     }
     $episodePath = '/embed/'.(int)$id.'/'.(int)$season.'/'.(int)$episode;
     $html = false; $domainUsed = null;
-    foreach (['https://mgeb.lat','https://mgeb.site'] as $domain) {
+    foreach (['https://mgeb.site','https://mgeb.lat'] as $domain) {
         $ch = curl_init($domain.$episodePath);
         curl_setopt_array($ch, [
             CURLOPT_RETURNTRANSFER=>true, CURLOPT_FOLLOWLOCATION=>true,
@@ -953,12 +953,19 @@ async function pmLoadSource(n) {
       const sources = result.sources.filter(x => x && pmValidUrl(x.embed));
       if (!sources.length) throw new Error('Nenhuma fonte válida');
       pmOpening=false;
-      if (sources.length===1) { pmOpenInFrame(sources[0].embed); return; }
-      pmModal('Selecione o servidor',
-        '<p>Escolha uma das opções disponíveis.</p><div class="pm-servers">'+
-        sources.map((x,i)=>pmServerButton(i+1, 'Dublado')).join('')+'</div>',
-        'Se uma fonte falhar, regressa e escolhe outra.');
-      sources.forEach((x,i)=> { const b=pmEl('pm-s'+(i+1)); if(b) b.onclick=()=>pmOpenInFrame(x.embed); });
+      // O servidor 2 mostra SEMPRE as fontes, mesmo que só exista uma.
+      // Botões locais não alteram a numeração principal dos servidores.
+      pmModal('Escolha uma fonte',
+        '<h2>'+pmEscape(PM_DISPLAY_TITLE || 'Pronto para assistir')+'</h2>'+
+        '<div class="pm-servers">'+
+        sources.map((x,i)=>
+          '<button class="pm-server-btn" type="button" id="pm-alt-'+i+'">'+
+          '<span class="pm-server-btn-icon">'+ICONS.play+'</span>'+
+          '<span class="pm-server-btn-info"><strong>Opção '+(i+1)+'</strong><small>Dublado</small></span>'+
+          '<span class="pm-server-btn-arrow">'+ICONS.arrow+'</span></button>'
+        ).join('')+'</div>',
+        'Se a reprodução falhar, volta e tenta outra opção.');
+      sources.forEach((x,i)=> { const b=pmEl('pm-alt-'+i); if(b) b.onclick=()=>pmOpenInFrame(x.embed); });
     } catch(e) { pmErrorSource(2, e.name==='AbortError'?'A fonte demorou a responder. Tenta novamente.':e.message); }
     return;
   }
