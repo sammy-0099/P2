@@ -1,6 +1,7 @@
 <?php
 /** PlayMoz: TMDB direto, seletor de fonte e player remoto. PHP 7.4+ */
 require_once dirname(__DIR__) . '/redeflix-resolver.php';
+require_once dirname(__DIR__) . '/hyper-resolver.php';
 define('TMDB_API_KEY', getenv('TMDB_API_KEY') ?: 'b73f5479e8443355e40462afe494fc52');
 define('PLAYER_BASE', 'http://fimoo.site/token-expires/player/');
 define('PLAYER_ORIGIN', 'http://fimoo.site');
@@ -301,6 +302,9 @@ if (isset($_GET['stream'])) {
         http_response_code(404); exit('Fonte indisponível');
     }
     $url = $entry['url'];
+    // Mantém o Referer de cada origem sem mudar a interface JW Player.
+    $pmVideoReferer = ($entry['referer'] ?? '') === PM_HYPER_ORIGIN . '/'
+        ? PM_HYPER_ORIGIN . '/' : PLAYER_ORIGIN . '/';
     if (!function_exists('curl_init') || !preg_match('~^https?://~i', $url)) {
         http_response_code(502); exit;
     }
@@ -318,6 +322,7 @@ if (isset($_GET['stream'])) {
         CURLOPT_CONNECTTIMEOUT => 5,
         CURLOPT_TIMEOUT => 8,
         CURLOPT_USERAGENT => 'Mozilla/5.0',
+        CURLOPT_REFERER => $pmVideoReferer,
         CURLOPT_SSL_VERIFYPEER => true,
     ]);
     curl_exec($headCh);
@@ -352,7 +357,7 @@ if (isset($_GET['stream'])) {
         CURLOPT_USERAGENT => 'Mozilla/5.0',
         CURLOPT_SSL_VERIFYPEER => true,
         CURLOPT_HTTPHEADER => array_merge(
-            ['Accept: video/mp4,video/*;q=0.9,*/*;q=0.8', 'Referer: '.PLAYER_ORIGIN.'/'],
+            ['Accept: video/mp4,video/*;q=0.9,*/*;q=0.8', 'Referer: '.$pmVideoReferer],
             $range ? ['Range: '.$range] : []
         ),
         CURLOPT_HEADERFUNCTION => function($ch, $line) {
@@ -494,16 +499,35 @@ if (isset($_GET['mgeb']) && $_GET['mgeb'] === '1') {
     echo json_encode(['ok'=>count($result)>0,'sources'=>$result,'domain'=>$domainUsed,'error'=>$result?null:'Nenhuma fonte de vídeo foi encontrada.'],JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE);exit;
 }
 
-if (isset($_GET['source']) && $_GET['source'] === '1') {
+// PlayMoz V12: Servidor 1 = Hyper; Servidor 2 = antiga fonte Redeflix.
+// As duas fontes utilizam o mesmo token-store e JW Player já existentes.
+if (isset($_GET['source']) && in_array((string)$_GET['source'], ['1', '2'], true)) {
     header('Content-Type: application/json; charset=utf-8');
     header('Cache-Control: private, no-store');
-    $video=pm_redeflix_resolve($id, $season, $episode);
-    if (!$video) { echo json_encode(['ok'=>false,'error'=>'rede_source_unavailable']); exit; }
-    $token=bin2hex(random_bytes(16));
-    if (!pm_store_put($token,['url'=>$video,'label'=>'HD','poster'=>'https://i.imgur.com/XB5B8Md.jpeg'])) {
+    $sourceNumber = (string)$_GET['source'];
+    if (!$id || !ctype_digit((string)$id) || !$season || !$episode) {
+        http_response_code(400);
+        echo json_encode(['ok'=>false,'error'=>'invalid_episode']); exit;
+    }
+    if ($sourceNumber === '1') {
+        $video = pm_hyper_resolve((int)$id, (int)$season, (int)$episode);
+        $error = 'hyper_source_unavailable';
+        $label = 'Hyper HD';
+    } else {
+        $video = pm_redeflix_resolve($id, $season, $episode);
+        $error = 'rede_source_unavailable';
+        $label = 'HD';
+    }
+    if (!$video) {
+        echo json_encode(['ok'=>false,'error'=>$error]); exit;
+    }
+    $token = bin2hex(random_bytes(16));
+    $entry = ['url'=>$video,'label'=>$label,'poster'=>'https://i.imgur.com/XB5B8Md.jpeg'];
+    if ($sourceNumber === '1') $entry['referer'] = PM_HYPER_ORIGIN . '/';
+    if (!pm_store_put($token, $entry)) {
         echo json_encode(['ok'=>false,'error'=>'player_store_failed']); exit;
     }
-    $self=strtok($_SERVER['REQUEST_URI']??'/', '?');
+    $self = strtok($_SERVER['REQUEST_URI']??'/', '?');
     echo json_encode(['ok'=>true,'server'=>['embed'=>$self.'?embed='.$token]],JSON_UNESCAPED_SLASHES);exit;
 }
 
@@ -915,7 +939,7 @@ let pmFoundServer = null;
 let pmOpening = false;
 function pmServerButton(n, description) {
   return '<button class="pm-server-btn" type="button" id="pm-s'+n+'">'+
-    '<span class="pm-server-btn-icon">'+(n===2?ICONS.layers:ICONS.play)+'</span>'+
+    '<span class="pm-server-btn-icon">'+(n===3?ICONS.layers:ICONS.play)+'</span>'+
     '<span class="pm-server-btn-info"><strong>Servidor '+n+'</strong><small>'+description+'</small></span>'+
     '<span class="pm-server-btn-arrow">'+ICONS.arrow+'</span></button>';
 }
@@ -923,11 +947,13 @@ function pmShowServers() {
   pmOpening = false;
   pmModal('Selecione o servidor',
     '<h2>'+pmEscape(PM_DISPLAY_TITLE || 'Pronto para assistir')+'</h2><div class="pm-servers">'+
-    pmServerButton(1,'Dublado')+
-    pmServerButton(2,'Dublado')+'</div>',
+    pmServerButton(1,'Dublado · Principal')+
+    pmServerButton(2,'Dublado')+
+    pmServerButton(3,'Dublado · fontes alternativas')+'</div>',
     'Escolha uma opção para iniciar a reprodução.');
   pmEl('pm-s1').onclick = () => pmLoadSource(1);
   pmEl('pm-s2').onclick = () => pmLoadSource(2);
+  pmEl('pm-s3').onclick = () => pmLoadSource(3);
 }
 function pmShowFallback() { pmShowServers(); }
 function pmErrorSource(n, message) {
@@ -940,7 +966,7 @@ function pmErrorSource(n, message) {
 async function pmLoadSource(n) {
   if (pmOpening) return;
   pmOpening = true;
-  if (n===2) {
+  if (n===3) {
     pmLoading();
     try {
       const ctrl = new AbortController();
@@ -953,7 +979,7 @@ async function pmLoadSource(n) {
       const sources = result.sources.filter(x => x && pmValidUrl(x.embed));
       if (!sources.length) throw new Error('Nenhuma fonte válida');
       pmOpening=false;
-      // O servidor 2 mostra SEMPRE as fontes, mesmo que só exista uma.
+      // O servidor 3 mostra SEMPRE as fontes, mesmo que só exista uma.
       // Botões locais não alteram a numeração principal dos servidores.
       pmModal('Escolha uma fonte',
         '<h2>'+pmEscape(PM_DISPLAY_TITLE || 'Pronto para assistir')+'</h2>'+
@@ -966,7 +992,7 @@ async function pmLoadSource(n) {
         ).join('')+'</div>',
         'Se a reprodução falhar, volta e tenta outra opção.');
       sources.forEach((x,i)=> { const b=pmEl('pm-alt-'+i); if(b) b.onclick=()=>pmOpenInFrame(x.embed); });
-    } catch(e) { pmErrorSource(2, e.name==='AbortError'?'A fonte demorou a responder. Tenta novamente.':e.message); }
+    } catch(e) { pmErrorSource(3, e.name==='AbortError'?'A fonte demorou a responder. Tenta novamente.':e.message); }
     return;
   }
   pmLoading();
