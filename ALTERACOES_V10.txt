@@ -1,0 +1,1 @@
+V10: restaurado JW Player 8.6.2 e a biblioteca original da V8 em filmes/séries, mantendo a UI da V9; tipo da fonte definido automaticamente como MP4/HLS/DASH. DRM/CORS/mixed-content continuam sob controlo do navegador/servidor.
