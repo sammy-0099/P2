@@ -1,0 +1,17 @@
+PLAYMOZ — CORREÇÕES V2
+1. Os três servidores aparecem imediatamente, sem aguardar rede.
+2. Resolução de cada fonte apenas ao seleccionar o servidor.
+3. Removido parâmetro IMDb do endereço e dos ecrãs; o fornecedor legado do servidor 1 para filmes continua a fazer correspondência TMDB->IMDb internamente, pois essa origem exige IMDb.
+4. Servidor 1 para séries faz sondagem sequencial limitada a quatro qualidades.
+5. Servidor 2 conserva o mecanismo RedeFlix ticket -> MP4/M3U8 -> mesmo JW Player interno.
+6. Botão de voltar mostra novamente todos os servidores. Timeout de 28 s e mensagem por servidor.
+7. SITE_BASE determinado a partir do host em execução, sem domínio fixo.
+
+TESTAR:
+php -l filme/index.php
+php -l serie/index.php
+php -S 127.0.0.1:8080
+Ver filme: http://127.0.0.1:8080/filme/?id=550
+Ver serie: http://127.0.0.1:8080/serie/?id=387&season=1&episode=1
+É necessário alojamento com PHP+cURL e armazenamento temporário gravável.
+A operação remota e reprodução não puderam ser verificadas neste ambiente offline.
