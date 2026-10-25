@@ -572,7 +572,7 @@ if (isset($_GET['probe'])) {
         if (is_array($cached) && ($cached['expires'] ?? 0) > time() && !empty($cached['token'])) {
             $existing = pm_store_get($cached['token']);
             if ($existing) {
-                $embedUrl = SITE_BASE . strtok($_SERVER['REQUEST_URI'] ?? '/', '?') . '?embed=' . $cached['token'];
+                $embedUrl = strtok($_SERVER['REQUEST_URI'] ?? '/', '?') . '?embed=' . $cached['token'];
                 echo json_encode(['ok'=>true,'server'=>[
                     'url'      => $existing['url'],
                     'original' => $existing['url'],
@@ -606,7 +606,7 @@ if (isset($_GET['probe'])) {
             pm_store_init();
             @file_put_contents($cacheFile, json_encode(['token'=>$token,'expires'=>time()+300]), LOCK_EX);
 
-            $embedUrl = SITE_BASE . strtok($_SERVER['REQUEST_URI'] ?? '/', '?') . '?embed=' . $token;
+            $embedUrl = strtok($_SERVER['REQUEST_URI'] ?? '/', '?') . '?embed=' . $token;
             $found = [
                 'url'      => $link,
                 'original' => $link,
@@ -625,7 +625,7 @@ if($season) $params['season']=$season;
 if($episode) $params['episode']=$episode;
 
 $self=strtok($_SERVER['REQUEST_URI']??'/', '?');
-$base=SITE_BASE.$self.'?'.http_build_query($params);
+$base=$self.'?'.http_build_query($params);
 // Backdrop TMDB: cache local e fallback visual sem bloquear o player.
 $pmBackdrop = '';
 if ($id && ctype_digit((string)$id)) {
@@ -970,14 +970,14 @@ async function pmLoadSource(n) {
     const timer = setTimeout(() => ctrl.abort(), 28000);
     let response;
     try {
-      response=await fetch(PM_BASE + '&source='+n, {cache:'no-store', credentials:'same-origin', signal:ctrl.signal});
+      response=await fetch(new URL(PM_BASE + '&source='+n, window.location.href).href, {cache:'no-store', credentials:'same-origin', signal:ctrl.signal});
     } finally { clearTimeout(timer); }
-    const data=await response.json();
+    const data=await response.json().catch(() => { throw new Error('O servidor não devolveu uma resposta JSON válida (HTTP '+response.status+').'); });
     const embed=data?.server?.embed;
     if (!response.ok || !data.ok || !embed || !pmValidUrl(embed)) throw new Error(data.error || 'Fonte indisponível');
     pmOpenInFrame(embed);
     pmOpening=false;
-  } catch(e) { pmErrorSource(n, 'Servidor '+n+': '+(e.name==='AbortError'?'A ligação demorou demasiado. Tenta novamente.':'Não foi possível iniciar este vídeo. Escolhe outra fonte.')); }
+  } catch(e) { pmErrorSource(n, 'Servidor '+n+': '+(e.name==='AbortError'?'A ligação demorou demasiado. Tenta novamente.':(e.message==='Failed to fetch'?'Falha de rede ou pedido bloqueado. Verifica a ligação.':(e.message||'Não foi possível iniciar este vídeo. Escolhe outra fonte.')))); }
 }
 function pmScan() {
   if (!PM_ID) {
