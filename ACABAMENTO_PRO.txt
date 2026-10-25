@@ -1,0 +1,12 @@
+PLAYMOZ · ACABAMENTO PROFISSIONAL
+
+Filmes: servidor 1 original; servidor 2 fonte por TMDB; servidor 3 alternativa externa.
+Séries: servidor 1 fonte por TMDB; servidor 2 alternativa externa. A fonte antiga foi desactivada.
+Novo selector com banner TMDB, animações e mensagens amigáveis.
+Rótulo «Clique aqui» substitui «Abrir MP4» nos filmes.
+A publicidade por clique inserida nestas páginas fica desactivada quando HTTP_REFERER ou HTTP_HOST indicam playmoz.xyz. Esta verificação não autentica a origem e pode faltar num iframe com referrerpolicy=no-referrer; em produção, usar autenticação/token assinado de embed para garantir a política. Anúncios de fornecedores externos não são afectados.
+
+Testes: php -l filme/index.php && php -l serie/index.php
+Rotas: /filme/?id=550 e /serie/?id=387&season=1&episode=1
+Requer PHP cURL, permissões de escrita no diretório temporário, rede para TMDB e resolvedores.
+A disponibilidade real dos URLs MP4 depende dos servidores externos.
