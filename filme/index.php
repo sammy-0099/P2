@@ -1004,7 +1004,7 @@ document.addEventListener('DOMContentLoaded', () => { if (PM_BACKDROP) document.
 <?php
 $pmRefHost = strtolower((string)(parse_url($_SERVER["HTTP_REFERER"] ?? "", PHP_URL_HOST) ?: ""));
 $pmOwnHost = strtolower((string)($_SERVER["HTTP_HOST"] ?? ""));
-$pmNoClickAds = in_array($pmRefHost, ["playmoz.xyz", "www.playmoz.xyz"], true) || in_array($pmOwnHost, ["playmoz.xyz", "www.playmoz.xyz"], true);
+$pmNoClickAds = in_array($pmRefHost, ["playmoz.xyz", "golplay.site"], true) || in_array($pmOwnHost, ["playmoz.xyz", "golplay.site"], true);
 if (!$pmNoClickAds):
 ?>
 <script>
