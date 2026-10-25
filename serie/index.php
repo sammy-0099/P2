@@ -264,7 +264,7 @@ function pmHideErr(){
 
 var player = jwplayer("ani-player");
 player.setup({
-  sources: [{ file: <?= $urlJs ?>, label: <?= $labelJs ?>, type: "mp4", default: "false" }],
+  sources: [{ file: <?= $urlJs ?>, label: <?= $labelJs ?>, type: (/\.m3u8(?:[?#]|$)/i.test(<?= $urlJs ?>) ? "hls" : (/\.mpd(?:[?#]|$)/i.test(<?= $urlJs ?>) ? "dash" : "mp4")), default: "false" }],
   aspectratio: "16:9",
   startparam: "start",
   primary: "html5",
