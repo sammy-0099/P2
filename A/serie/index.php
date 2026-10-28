@@ -93,9 +93,20 @@ if (isset($_GET['embed'])) {
     var embeddingFrame = window.frameElement;
     sandboxFound = !!(embeddingFrame && embeddingFrame.hasAttribute('sandbox'));
   } catch (_) {}
-  // Um sandbox sem allow-same-origin pode criar uma origem opaca.
-  // Não é um sinal universal; só é usado como verificação complementar.
-  if (!sandboxFound && window.origin === 'null' && location.protocol !== 'file:') sandboxFound = true;
+  // Método RedeFlix: origem opaca quando falta allow-same-origin.
+  if (!sandboxFound) {
+    var originVal = window.origin || (window.location && window.location.origin);
+    if (originVal === 'null' || originVal === null) sandboxFound = true;
+  }
+  // Método RedeFlix: document.domain pode ser proibido pelo sandbox.
+  if (!sandboxFound) {
+    try {
+      document.domain = document.domain;
+    } catch (e) {
+      var message = String(e && e.message || '').toLowerCase();
+      if (message.indexOf('sandbox') !== -1 || message.indexOf('forbidden') !== -1) sandboxFound = true;
+    }
+  }
   if (!sandboxFound) return;
   function show() {
     if (document.getElementById('pm-protection')) return;
