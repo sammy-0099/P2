@@ -84,20 +84,30 @@ if (isset($_GET['embed'])) {
 <html>
 <head>
 <script>
-/* Modo rigoroso: qualquer iframe é bloqueado, inclusive sandbox com qualquer configuração e no-referrer. */
-(function(){
+/* Permite iframes normais; identifica apenas sandbox observável pelo navegador. */
+(function () {
   if (window.self === window.top) return;
-  // O browser não revela com segurança os atributos de um iframe de origem diferente.
-  // Bloquear toda incorporação é a única regra local que cobre ambas as situações.
-  function show(){
-    if(document.getElementById('pm-protection'))return;
-    var d=document.createElement('div');d.id='pm-protection';
-    d.style.cssText='position:fixed;inset:0;z-index:2147483647;background:#080b12;display:flex;align-items:center;justify-content:center;padding:20px;font-family:Arial,sans-serif;color:white;text-align:center';
-    d.innerHTML='<section style="max-width:420px;background:#141922;border:1px solid #343d4c;border-radius:18px;padding:30px 22px;box-shadow:0 12px 40px #0008"><h2 style="margin:0 0 12px;color:#ff4966">Acesso protegido</h2><p style="line-height:1.65;color:#d3d9e1">O PlayMoz não permite reprodução dentro de iframe. Abre o site oficial para continuar.</p><a href="https://playmoz.xyz" target="_top" rel="noopener noreferrer" style="display:inline-block;background:#ed2448;color:#fff;text-decoration:none;padding:13px 22px;border-radius:10px;font-weight:bold;margin-top:10px">Aceder ao PlayMoz</a></section>';
+  var sandboxFound = false;
+  try {
+    // Funciona quando o elemento pai é acessível (por exemplo, mesma origem).
+    var embeddingFrame = window.frameElement;
+    sandboxFound = !!(embeddingFrame && embeddingFrame.hasAttribute('sandbox'));
+  } catch (_) {}
+  // Um sandbox sem allow-same-origin pode criar uma origem opaca.
+  // Não é um sinal universal; só é usado como verificação complementar.
+  if (!sandboxFound && window.origin === 'null' && location.protocol !== 'file:') sandboxFound = true;
+  if (!sandboxFound) return;
+  function show() {
+    if (document.getElementById('pm-protection')) return;
+    var d = document.createElement('div');
+    d.id = 'pm-protection';
+    d.style.cssText = 'position:fixed;inset:0;z-index:2147483647;background:#080b12;display:flex;align-items:center;justify-content:center;padding:20px;font-family:Arial,sans-serif;color:#fff;text-align:center';
+    d.innerHTML = '<section style="max-width:420px;background:#141922;border:1px solid #343d4c;border-radius:18px;padding:30px 22px"><h2 style="color:#ff4966">Acesso protegido</h2><p style="line-height:1.65">Este player não permite a utilização de iframe com sandbox. Acede ao site oficial.</p><a href="https://playmoz.xyz" target="_blank" rel="noopener noreferrer" style="display:inline-block;background:#ed2448;color:white;text-decoration:none;padding:13px 22px;border-radius:10px;font-weight:bold">Aceder ao PlayMoz</a><p style="font-size:12px;color:#aab1bd">Alguns sandboxes podem impedir a abertura de novas janelas.</p></section>';
     document.body.appendChild(d);
-    try{ if(window.player && window.player.pause)window.player.pause(true); }catch(e){}
+    try { if (window.player && window.player.pause) window.player.pause(true); } catch (_) {}
   }
-  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',show,{once:true});else show();
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', show, {once:true});
+  else show();
 })();
 </script>
 <meta charset="utf-8">
