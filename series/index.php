@@ -68,7 +68,8 @@ if (isset($_GET['embed'])) {
     $isHlsMedia = str_ends_with($mediaPath, '.m3u8');
     $isDashMedia = str_ends_with($mediaPath, '.mpd');
     // HLS e DASH usam o URL do manifesto; o proxy MP4 não reescreve segmentos.
-    $proxyUrl = ($isHlsMedia || $isDashMedia) ? $url : strtok($_SERVER['REQUEST_URI'] ?? '/', '?') . '?stream=' . $token;
+    // O browser recebe a fonte original, sem proxy MP4 para preservar o seek.
+    $proxyUrl = $url;
 
     $urlJs    = json_encode($proxyUrl, JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_UNESCAPED_SLASHES);
     $rawJs    = json_encode($url,      JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_UNESCAPED_SLASHES);
@@ -77,10 +78,28 @@ if (isset($_GET['embed'])) {
     header('Content-Type: text/html; charset=utf-8');
     header('Cache-Control: private, no-store');
     header('X-Content-Type-Options: nosniff');
+    header('Referrer-Policy: strict-origin-when-cross-origin');
     ?>
 <!DOCTYPE html>
 <html>
 <head>
+<script>
+/* Modo rigoroso: qualquer iframe é bloqueado, inclusive sandbox com qualquer configuração e no-referrer. */
+(function(){
+  if (window.self === window.top) return;
+  // O browser não revela com segurança os atributos de um iframe de origem diferente.
+  // Bloquear toda incorporação é a única regra local que cobre ambas as situações.
+  function show(){
+    if(document.getElementById('pm-protection'))return;
+    var d=document.createElement('div');d.id='pm-protection';
+    d.style.cssText='position:fixed;inset:0;z-index:2147483647;background:#080b12;display:flex;align-items:center;justify-content:center;padding:20px;font-family:Arial,sans-serif;color:white;text-align:center';
+    d.innerHTML='<section style="max-width:420px;background:#141922;border:1px solid #343d4c;border-radius:18px;padding:30px 22px;box-shadow:0 12px 40px #0008"><h2 style="margin:0 0 12px;color:#ff4966">Acesso protegido</h2><p style="line-height:1.65;color:#d3d9e1">O PlayMoz não permite reprodução dentro de iframe. Abre o site oficial para continuar.</p><a href="https://playmoz.xyz" target="_top" rel="noopener noreferrer" style="display:inline-block;background:#ed2448;color:#fff;text-decoration:none;padding:13px 22px;border-radius:10px;font-weight:bold;margin-top:10px">Aceder ao PlayMoz</a></section>';
+    document.body.appendChild(d);
+    try{ if(window.player && window.player.pause)window.player.pause(true); }catch(e){}
+  }
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',show,{once:true});else show();
+})();
+</script>
 <meta charset="utf-8">
 <meta name="robots" content="noindex, nofollow">
 <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
