@@ -5,9 +5,9 @@ function pm_redeflix_resolve($id, $season = null, $episode = null) {
     $id = (int)$id;
     if ($season !== null && $episode !== null) {
         if (!filter_var($season,FILTER_VALIDATE_INT,['options'=>['min_range'=>1]]) || !filter_var($episode,FILTER_VALIDATE_INT,['options'=>['min_range'=>1]])) return null;
-        $page = 'https://redeflixapi.store/serie/'.$id.'/'.(int)$season.'/'.(int)$episode;
+        $page = 'https://redeflixapi.bar/serie/'.$id.'/'.(int)$season.'/'.(int)$episode;
     } else {
-        $page = 'https://redeflixapi.store/filme/'.$id;
+        $page = 'https://redeflixapi.bar/filme/'.$id;
     }
     $cookie = tempnam(sys_get_temp_dir(), 'pm_rf_');
     if (!$cookie) return null;
@@ -19,8 +19,8 @@ function pm_redeflix_resolve($id, $season = null, $episode = null) {
         if ($status !== 200 || !is_string($html) || !preg_match('/var\s+fastLaunchTickets\s*=\s*(\{.*?\})\s*;/s',$html,$m)) return null;
         $tickets=json_decode($m[1],true);
         if (!is_array($tickets) || empty($tickets['default']) || !is_string($tickets['default'])) return null;
-        $post=curl_init('https://redeflixapi.store/playerkys/source.php');
-        curl_setopt_array($post,[CURLOPT_RETURNTRANSFER=>true,CURLOPT_FOLLOWLOCATION=>false,CURLOPT_CONNECTTIMEOUT=>8,CURLOPT_TIMEOUT=>20,CURLOPT_ENCODING=>'',CURLOPT_COOKIEFILE=>$cookie,CURLOPT_COOKIEJAR=>$cookie,CURLOPT_POST=>true,CURLOPT_POSTFIELDS=>json_encode(['ticket'=>$tickets['default']]),CURLOPT_REFERER=>$page,CURLOPT_HTTPHEADER=>array_merge($headers,['Content-Type: application/json','X-Requested-With: RedeFlixPlayer','Origin: https://redeflixapi.store'])]);
+        $post=curl_init('https://redeflixapi.bar/playerkys/source.php');
+        curl_setopt_array($post,[CURLOPT_RETURNTRANSFER=>true,CURLOPT_FOLLOWLOCATION=>false,CURLOPT_CONNECTTIMEOUT=>8,CURLOPT_TIMEOUT=>20,CURLOPT_ENCODING=>'',CURLOPT_COOKIEFILE=>$cookie,CURLOPT_COOKIEJAR=>$cookie,CURLOPT_POST=>true,CURLOPT_POSTFIELDS=>json_encode(['ticket'=>$tickets['default']]),CURLOPT_REFERER=>$page,CURLOPT_HTTPHEADER=>array_merge($headers,['Content-Type: application/json','X-Requested-With: RedeFlixPlayer','Origin: https://redeflixapi.bar'])]);
         $response=curl_exec($post); $http=curl_getinfo($post,CURLINFO_HTTP_CODE);curl_close($post);
         if ($http !== 200 || !is_string($response)) return null;
         $data=json_decode($response,true);
