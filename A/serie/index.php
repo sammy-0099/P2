@@ -550,6 +550,7 @@ if (isset($_GET['source']) && in_array((string)$_GET['source'], ['1', '2'], true
         echo json_encode(['ok'=>false,'error'=>'invalid_episode']); exit;
     }
     if ($sourceNumber === '1') {
+        @set_time_limit(100);
         $video = pm_hyper_resolve((int)$id, (int)$season, (int)$episode);
         $error = 'hyper_source_unavailable';
         $label = 'Hyper HD';
@@ -1038,7 +1039,7 @@ async function pmLoadSource(n) {
   pmLoading();
   try {
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 28000);
+    const timer = setTimeout(() => ctrl.abort(), 100000);
     let response;
     try {
       response=await fetch(new URL(PM_BASE + '&source='+n, window.location.href).href, {cache:'no-store', credentials:'same-origin', signal:ctrl.signal});
