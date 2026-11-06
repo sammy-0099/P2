@@ -9,3 +9,8 @@ A pasta `/A` aplica as regras de incorporação.
 - A pasta `/A` não contém o pop-up de anúncio a cada 2 minutos.
 
 Domínios permitidos são definidos em `A/config.php`, em `PM_AUTHORIZED_EMBED_ORIGINS`.
+
+
+## Fonte Hyper (Servidor 1)
+
+A resolução Hyper de filmes e séries é feita pelo scanner Chromium/CDP no servidor. Consulte `scanner/README.md` e `INSTALACAO_HYPER_SCANNER.txt` para instalar e configurar Node.js, Chromium e o token partilhado com PHP.
