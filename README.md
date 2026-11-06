@@ -5,3 +5,8 @@ Mantém o design e o menu Espelhar/Baixar originais. O menu original aparece ao 
 O modal apresenta Servidor 1, Servidor 2, etc., com prioridade para MP4, depois HLS e iframe. O nome original da fonte aparece em subtítulo, com truncamento para nomes extensos. O botão de voltar permite trocar de fonte; erros do JW Player mostram a opção de escolher outro servidor. O domínio bloqueado permanece filtrado.
 
 Instalação: publique todos os ficheiros preservando as pastas e o ficheiro `server-selector.js` na raiz.
+
+
+## Fonte Hyper (Servidor 1)
+
+A resolução Hyper de filmes e séries é feita pelo scanner Chromium/CDP no servidor. Consulte `scanner/README.md` e `INSTALACAO_HYPER_SCANNER.txt` para instalar e configurar Node.js, Chromium e o token partilhado com PHP.
