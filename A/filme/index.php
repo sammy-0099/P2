@@ -2,6 +2,7 @@
 /** PlayMoz: TMDB -> IMDb, seletor de fonte e player remoto. PHP 7.4+ */
 require_once dirname(__DIR__) . '/redeflix-resolver.php';
 define('TMDB_API_KEY', getenv('TMDB_API_KEY') ?: 'b73f5479e8443355e40462afe494fc52');
+require_once dirname(__DIR__) . '/hyper-resolver.php';
 define('PLAYER_BASE', 'http://fimoo.site/token-expires/player/f/?i=');
 define('PLAYER_ORIGIN', 'http://fimoo.site');
 define('BLOCKED_HOST', '');
@@ -10,7 +11,6 @@ define('SITE_BASE', ((isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ?
 
 define('STREAM_DIR', sys_get_temp_dir() . '/pm_streams');
 define('STREAM_TTL', 1800);
-define('SERVER1_ENDPOINT', 'https://hyper.hyperapps.site/api/download/filmes/');
 
 $qualities = ['HD4','HD3','HD2','HD1','FHD','HD5','HD6','HD7','HD8','HD9','HD10','HD11','HD12','HD13','HD14','HD15','HD16','HD17','HD18','HD19','HD20','SD'];
 
@@ -414,98 +414,20 @@ function requestUrl($url, $headers = []) {
     return $body;
 }
 function tmdbToImdb($id, $type) {
-    if (!ctype_digit((string)$id) || !in_array($type,['movie','tv'],true)) return null;
-    // Tenta external_ids e, se necessário, os detalhes do título.
-    // Falhas de rede não devem ser confundidas com um IMDb inexistente.
+    if (!ctype_digit((string)$id) || !in_array($type, ['movie', 'tv'], true)) return null;
     foreach (['/external_ids', ''] as $suffix) {
-        $url='https://api.themoviedb.org/3/'.$type.'/'.rawurlencode($id).$suffix.'?api_key='.rawurlencode(TMDB_API_KEY);
-        $json=requestUrl($url, ['Accept: application/json']);
+        $url = 'https://api.themoviedb.org/3/' . $type . '/' . rawurlencode((string)$id)
+             . $suffix . '?api_key=' . rawurlencode(TMDB_API_KEY);
+        $json = requestUrl($url, ['Accept: application/json']);
         if ($json === false) continue;
-        $data=json_decode($json,true);
-        $imdb=is_array($data) ? ($data['imdb_id'] ?? null) : null;
-        if (is_string($imdb) && preg_match('/^tt\d{5,12}$/',$imdb)) return $imdb;
+        $data = json_decode($json, true);
+        $imdb = is_array($data) ? ($data['imdb_id'] ?? null) : null;
+        if (is_string($imdb) && preg_match('/^tt\d{5,12}$/', $imdb)) return $imdb;
     }
     return null;
 }
 
-/* Servidor 1: resolve slugs de filmes do catálogo; só aceita MP4 correspondente ao IMDb. */
-function pm_slug($name) {
-    $name = trim((string)$name);
-    if (function_exists('transliterator_transliterate')) $name = transliterator_transliterate('Any-Latin; Latin-ASCII', $name);
-    else $name = iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $name) ?: $name;
-    $name = strtolower($name);
-    return trim(preg_replace('/[^a-z0-9]+/', '-', $name), '-');
-}
-function pm_tmdb_from_imdb($imdb) {
-    if (!preg_match('/^tt\d{5,12}$/', (string)$imdb)) return null;
-    $url='https://api.themoviedb.org/3/find/'.rawurlencode($imdb).'?api_key='.rawurlencode(TMDB_API_KEY).'&external_source=imdb_id';
-    $json=requestUrl($url,['Accept: application/json']);
-    $data=$json ? json_decode($json,true) : null;
-    return is_array($data) && !empty($data['movie_results'][0]['id']) ? (string)$data['movie_results'][0]['id'] : null;
-}
-function pm_movie_slugs($tmdbId, $manual='') {
-    $slugs=[];
-    if (preg_match('/^[a-z0-9]+(?:-[a-z0-9]+)*$/', $manual)) $slugs[]=$manual;
-    if ($tmdbId && ctype_digit((string)$tmdbId)) {
-        foreach (['pt-BR','en-US'] as $lang) {
-            $json=requestUrl('https://api.themoviedb.org/3/movie/'.rawurlencode((string)$tmdbId).'?api_key='.rawurlencode(TMDB_API_KEY).'&language='.$lang, ['Accept: application/json']);
-            $info=$json ? json_decode($json,true) : null;
-            if (!is_array($info)) continue;
-            foreach (['title','original_title'] as $field) {
-                if (!empty($info[$field])) $slugs[]=pm_slug($info[$field]);
-            }
-        }
-    }
-    return array_slice(array_values(array_unique(array_filter($slugs))),0,5);
-}
-function pm_server1_mp4($slug, $imdb) {
-    if (!preg_match('/^[a-z0-9]+(?:-[a-z0-9]+)*$/', (string)$slug)
-        || !preg_match('/^tt\d{5,12}$/', (string)$imdb)
-        || !function_exists('curl_init')) return null;
-
-    $endpoint = SERVER1_ENDPOINT . rawurlencode($slug);
-    // Este endpoint responde com Location: <MP4 assinado>. NÃO seguir o
-    // redireccionamento: muitos fornecedores não respondem a HEAD do MP4.
-    foreach (['HEAD', 'GET'] as $method) {
-        $location = '';
-        $ch = curl_init($endpoint);
-        $opts = [
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_FOLLOWLOCATION => false,
-            CURLOPT_CONNECTTIMEOUT => 6,
-            CURLOPT_TIMEOUT => 15,
-            CURLOPT_USERAGENT => 'Mozilla/5.0 (compatible; PlayMoz/1.0)',
-            CURLOPT_SSL_VERIFYPEER => true,
-            CURLOPT_HEADERFUNCTION => function ($ch, $header) use (&$location) {
-                if (stripos($header, 'Location:') === 0) $location = trim(substr($header, 9));
-                return strlen($header);
-            },
-        ];
-        if ($method === 'HEAD') $opts[CURLOPT_NOBODY] = true;
-        else {
-            // GET de recurso que redirecciona; não permitir descarregar vídeo.
-            $opts[CURLOPT_RANGE] = '0-0';
-            $opts[CURLOPT_WRITEFUNCTION] = function ($ch, $chunk) { return 0; };
-        }
-        curl_setopt_array($ch, $opts);
-        curl_exec($ch);
-        $status = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        curl_close($ch);
-        if ($status >= 300 && $status < 400 && $location !== '') {
-            // Aceita só HTTPS de um armazenamento conhecido e filme correcto.
-            $parts = parse_url(html_entity_decode($location, ENT_QUOTES | ENT_HTML5, 'UTF-8'));
-            if (!$parts || strtolower($parts['scheme'] ?? '') !== 'https') return null;
-            $host = strtolower($parts['host'] ?? '');
-            if (!preg_match('/^s3\.[a-z0-9-]+\.wasabisys\.com$/', $host)) return null;
-            if (!preg_match('~/(tt\d{5,12})\.mp4$~i', $parts['path'] ?? '', $m)) return null;
-            if (strtolower($m[1]) !== strtolower($imdb)) return null;
-            return $location;
-        }
-        if ($status === 404) return null;
-    }
-    return null;
-}
-
+/* A fonte Hyper é resolvida pelo serviço de captura CDP em hyper-resolver.php. */
 function extractVideoLinks($html) {
     $found=[];
     $dom=new DOMDocument();
@@ -572,21 +494,24 @@ if (isset($_GET['source']) && $_GET['source'] === '2') {
 if (isset($_GET['source']) && $_GET['source']==='1') {
     header('Content-Type: application/json; charset=utf-8');
     header('Cache-Control: no-store');
-    if ($type!=='movie' || !$id) { echo json_encode(['ok'=>false,'error'=>'tmdb_id_required']); exit; }
-    $imdb = tmdbToImdb((string)$id,$type);
-    if (!$imdb) { echo json_encode(['ok'=>false,'error'=>'original_source_unavailable']); exit; }
-    pm_store_init();
-    $manual=(string)($_GET['slug']??'');
-    $slugs=pm_movie_slugs($id ?: pm_tmdb_from_imdb($imdb),$manual);
-    $video=null;
-    foreach ($slugs as $slug) {
-        $video=pm_server1_mp4($slug,$imdb);
-        if ($video) break;
+    if ($type !== 'movie' || !$id || !ctype_digit((string)$id)) {
+        http_response_code(400);
+        echo json_encode(['ok'=>false,'error'=>'tmdb_id_required']); exit;
     }
-    if (!$video) { echo json_encode(['ok'=>false]); exit; }
-    $token=bin2hex(random_bytes(16));
-    if (!pm_store_put($token,['url'=>$video,'label'=>'HD','poster'=>'https://i.imgur.com/XB5B8Md.jpeg'])) {
-        echo json_encode(['ok'=>false]); exit;
+    @set_time_limit(100);
+    pm_store_init();
+    $video = pm_hyper_movie_resolve((int)$id);
+    if (!$video) {
+        echo json_encode(['ok'=>false,'error'=>'hyper_movie_unavailable']); exit;
+    }
+    $token = bin2hex(random_bytes(16));
+    if (!pm_store_put($token, [
+        'url'=>$video,
+        'label'=>'Hyper HD',
+        'referer'=>'https://hyper.hyperapps.site/',
+        'poster'=>'https://i.imgur.com/XB5B8Md.jpeg'
+    ])) {
+        echo json_encode(['ok'=>false,'error'=>'player_store_failed']); exit;
     }
     $path=strtok($_SERVER['REQUEST_URI']??'/','?');
     echo json_encode(['ok'=>true,'server'=>['embed'=>$path.'?embed='.$token,'quality'=>'HD']],JSON_UNESCAPED_SLASHES);
@@ -1006,7 +931,7 @@ async function pmLoadSource(n) {
   pmLoading();
   try {
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 28000);
+    const timer = setTimeout(() => ctrl.abort(), 100000);
     let response;
     try {
       response=await fetch(new URL(PM_BASE + '&source='+n, window.location.href).href, {cache:'no-store', credentials:'same-origin', signal:ctrl.signal});
