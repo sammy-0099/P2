@@ -1,0 +1,36 @@
+PLAYMOZ — ALTERAÇÕES DO SCANNER HYPER
+
+1. Filme / Servidor 1
+   - Removida a resolução antiga baseada em /api/download/filmes/.
+   - TMDB identifica o título e o slug do filme no catálogo Hyper.
+   - O scanner abre /filmes/{slug}/assistir e observa a rede real.
+
+2. Séries / Servidor 1
+   - Removida a resolução antiga baseada em /api/download/episode/.
+   - O PHP lê a ficha /series/{slug} (HTML equivalente ao view-source).
+   - Selecciona o href exacto do episódio e envia a rota ao scanner CDP.
+
+3. Scanner no servidor
+   - Novo serviço em scanner/server.js.
+   - Usa Chromium headless + CDP, sem Playwright e sem dependências npm externas.
+   - Requer Node.js 22+ e Chromium.
+   - Escuta apenas em 127.0.0.1:8787 e exige PM_SCANNER_TOKEN.
+   - Restringe os pedidos às páginas Assistir do domínio Hyper.
+
+4. Compatibilidade
+   - Mantidos os servidores alternativos e o player JW existente.
+   - Mantidos os selectores e o desenho actual.
+   - Actualizado o tempo limite do pedido do Servidor 1 para permitir a análise CDP.
+
+5. Ficheiros principais alterados
+   - hyper-resolver.php e A/hyper-resolver.php
+   - filme/index.php e A/filme/index.php
+   - serie/index.php, series/index.php e A/serie/index.php
+   - Documentação e instalação do scanner em scanner/ e INSTALACAO_HYPER_SCANNER.txt
+
+6. Verificações realizadas
+   - PHP lint sem erros nos resolvers e endpoints alterados.
+   - Node --check sem erros em scanner/server.js.
+   - Endpoint /health testado localmente.
+   - Parser de links de episódios e correspondência do título do filme testados.
+   - A captura final no servidor de produção depende da instalação do Chromium e da configuração do token.
