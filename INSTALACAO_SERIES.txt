@@ -1,9 +1,19 @@
 PLAYMOZ - SERIES
 
-URL: https://playmoz.xyz/serie/1399/1/1
-Alternativas: /series/1399/1/1 e /tv/1399/1/1
-Servidor 2: https://apps.golplay.site/tv/1399/1/1 (ID, temporada e episodio dinamicos).
+Rotas internas:
+- /serie/{tmdb_id}/{temporada}/{episodio}
+- /series/{tmdb_id}/{temporada}/{episodio}
+- /tv/{tmdb_id}/{temporada}/{episodio}
 
-Envie o conteudo do ZIP para a raiz do alojamento, mantendo a estrutura.
-Requer Apache com mod_rewrite e AllowOverride habilitados, PHP 7.4+ com cURL.
-Nao foi testado contra servidores remotos.
+Servidor 1 (Hyper):
+- Consulta a ficha /series/{slug}.
+- Encontra o link Assistir do episódio e abre a rota exacta da temporada/episódio.
+- Captura o recurso MP4/HLS/DASH pela rede através de Chromium/CDP no servidor.
+- Não utiliza /api/download.
+
+Servidor 2 mantém o resolver alternativo RedeFlix.
+Servidor 3 mantém a fonte alternativa MGEB.
+
+Requisitos: PHP 8+ com cURL, Node.js 22+, Chromium e Apache com mod_rewrite
+e AllowOverride habilitados. É necessário alojamento que permita manter um
+processo Node.js persistente. O scanner é configurado em scanner/README.md.
