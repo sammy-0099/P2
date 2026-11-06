@@ -1,0 +1,44 @@
+PLAYMOZ — INSTALAÇÃO DO SCANNER HYPER
+
+A fonte Hyper deixou de usar os endpoints /api/download.
+A nova resolução usa as páginas públicas Assistir e captura as respostas de rede
+do Chromium através do serviço local Node.js/CDP.
+
+ROTAS UTILIZADAS
+- Filmes: https://hyper.hyperapps.site/filmes/{slug}/assistir
+- Séries: o PHP consulta /series/{slug}, encontra o href do episódio solicitado
+  e o Chromium abre /series/{slug}/temporada/{temporada}/episodio/{episodio}.
+
+REQUISITOS
+- PHP 8+ com cURL.
+- Node.js 22+.
+- Chromium instalado no servidor.
+- VPS, container ou alojamento que permita manter um processo Node.js activo.
+- Apache com mod_rewrite e AllowOverride habilitados (para as rotas existentes).
+
+INSTALAÇÃO DO SCANNER
+1. Entre na pasta scanner/.
+2. Copie .env.example para .env.
+3. Defina PM_SCANNER_TOKEN com um segredo longo (pode gerar com:
+   openssl rand -hex 32).
+4. Confirme CHROMIUM_PATH (ex.: /usr/bin/chromium).
+5. Inicie o serviço com ./start.sh ou configure o ficheiro
+   scanner/playmoz-hyper-scanner.service.example no systemd.
+6. Configure o MESMO PM_SCANNER_TOKEN no ambiente do PHP-FPM/Apache.
+7. O scanner deve escutar apenas em 127.0.0.1:8787; não exponha esta porta
+   publicamente.
+
+TESTE
+- GET http://127.0.0.1:8787/health deve devolver {"ok":true,...}.
+- O PHP chama http://127.0.0.1:8787/scan automaticamente quando o utilizador
+  escolhe Servidor 1.
+
+NOTAS
+- Não é necessário executar nada no Termux.
+- O serviço observa apenas respostas de media públicas carregadas pelo player.
+- Não contorna DRM, autenticação ou outras protecções de acesso.
+- URLs assinados são temporários; a resolução é repetida quando a cache expira.
+- Se o alojamento for apenas PHP partilhado e não permitir Node/Chromium,
+  o scanner terá de correr num VPS/container acessível pelo backend PHP.
+
+Ver também: scanner/README.md
