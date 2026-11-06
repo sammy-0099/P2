@@ -1,0 +1,18 @@
+[Unit]
+Description=PlayMoz Hyper Network Scanner
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=www-data
+WorkingDirectory=/var/www/playmoz/scanner
+EnvironmentFile=/etc/playmoz-hyper-scanner.env
+ExecStart=/usr/bin/node /var/www/playmoz/scanner/server.js
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
