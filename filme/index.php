@@ -503,4 +503,157 @@ const fallbackPoster = 'data:image/svg+xml;utf8,' + encodeURIComponent(
 );
 
 function escapeHtml(s) {
-  return String(s ?? ''
+  return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+/* ============ CARREGAR CATEGORIAS ============ */
+async function carregarCategorias() {
+  try {
+    const r = await fetch('?acao=categorias');
+    const d = await r.json();
+    if (!d.ok) return;
+    const box = $('cats');
+    for (const c of d.categorias) {
+      const b = document.createElement('button');
+      b.className = 'cat-btn';
+      b.dataset.cat = c.id;
+      b.textContent = c.nome;
+      box.appendChild(b);
+    }
+  } catch (e) { /* silencioso */ }
+}
+
+/* ============ CARREGAR FILMES ============ */
+async function carregarFilmes(reset = false) {
+  if (carregando) return;
+  if (!reset && !temMais) return;
+  carregando = true;
+
+  if (reset) {
+    paginaAtual = 1;
+    temMais = true;
+    $('grid').innerHTML = '';
+    $('msg').style.display = 'block';
+    $('msg').innerHTML = '<div class="spin"></div><div>Carregando filmes...</div>';
+    $('mais').style.display = 'none';
+  }
+
+  try {
+    const params = new URLSearchParams({
+      acao: 'lista',
+      p: paginaAtual,
+    });
+    if (catAtual) params.set('cat', catAtual);
+    if (buscaAtual) params.set('q', buscaAtual);
+
+    const r = await fetch('?' + params.toString());
+    const d = await r.json();
+    if (!d.ok) throw new Error(d.error || 'Erro');
+
+    $('msg').style.display = 'none';
+
+    if (d.filmes.length === 0 && paginaAtual === 1) {
+      $('msg').style.display = 'block';
+      $('msg').innerHTML = '<div style="padding:30px 0">Nenhum filme encontrado.</div>';
+    }
+
+    const grid = $('grid');
+    for (const f of d.filmes) {
+      const card = document.createElement('div');
+      card.className = 'card';
+      card.onclick = () => abrirFilme(f.stream_id);
+      card.innerHTML =
+        '<img src="' + escapeHtml(f.poster || fallbackPoster) + '" alt="' + escapeHtml(f.nome) + '" loading="lazy" onerror="this.src=\'' + fallbackPoster + '\'">' +
+        '<div class="info">' +
+          '<strong>' + escapeHtml(f.nome) + '</strong>' +
+          '<small>' + (f.rating ? iconeEstrela + ' ' + escapeHtml(f.rating) : '') +
+          (f.ano ? (f.rating ? ' · ' : '') + escapeHtml(f.ano) : '') + '</small>' +
+        '</div>';
+      grid.appendChild(card);
+    }
+
+    temMais = !!d.tem_mais;
+    $('mais').style.display = temMais ? 'block' : 'none';
+  } catch (e) {
+    $('msg').style.display = 'block';
+    $('msg').innerHTML = '<div>Erro: ' + escapeHtml(e.message) + '</div>';
+  } finally {
+    carregando = false;
+  }
+}
+
+/* ============ ABRIR FILME (modal) ============ */
+async function abrirFilme(id) {
+  const modal = $('modal');
+  modal.classList.add('on');
+  document.body.style.overflow = 'hidden';
+
+  $('m-titulo').textContent = 'Carregando...';
+  $('m-meta').innerHTML = '';
+  $('m-sinopse').textContent = '';
+  $('frame').src = 'about:blank';
+
+  try {
+    const r = await fetch('?acao=filme&id=' + encodeURIComponent(id));
+    const d = await r.json();
+    if (!d.ok) throw new Error(d.error || 'Erro');
+
+    $('m-titulo').textContent = d.nome || 'Sem título';
+    $('m-meta').innerHTML =
+      (d.ano    ? '<span>' + iconeCalendario + escapeHtml(d.ano) + '</span>' : '') +
+      (d.genero ? '<span>' + iconeTag + escapeHtml(d.genero) + '</span>' : '') +
+      (d.rating ? '<span>' + iconeEstrela + escapeHtml(d.rating) + '</span>' : '');
+    $('m-sinopse').textContent = d.sinopse || '';
+
+    // Abre player
+    $('frame').src = d.embed;
+  } catch (e) {
+    $('m-titulo').textContent = 'Erro';
+    $('m-sinopse').textContent = e.message;
+  }
+}
+
+function fecharModal() {
+  $('modal').classList.remove('on');
+  document.body.style.overflow = '';
+  $('frame').src = 'about:blank';
+}
+
+/* ============ EVENTOS ============ */
+$('cats').addEventListener('click', (e) => {
+  const btn = e.target.closest('.cat-btn');
+  if (!btn) return;
+  document.querySelectorAll('.cat-btn').forEach(b => b.classList.remove('ativo'));
+  btn.classList.add('ativo');
+  catAtual = btn.dataset.cat || '';
+  carregarFilmes(true);
+});
+
+let timerBusca = null;
+$('busca').addEventListener('input', (e) => {
+  clearTimeout(timerBusca);
+  timerBusca = setTimeout(() => {
+    buscaAtual = e.target.value.trim();
+    carregarFilmes(true);
+  }, 350);
+});
+
+$('mais').addEventListener('click', () => {
+  paginaAtual++;
+  carregarFilmes(false);
+});
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') fecharModal();
+});
+
+$('modal').addEventListener('click', (e) => {
+  if (e.target.id === 'modal') fecharModal();
+});
+
+/* ============ INIT ============ */
+carregarCategorias();
+carregarFilmes(true);
+</script>
+</body>
+</html>
