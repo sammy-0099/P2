@@ -1,9 +1,8 @@
 <?php
-/** PlayMoz Player — fonte mgeb.space via redirect 302. Sem proxy PHP. PHP 7.4+ */
+/** PlayMoz Player — fonte única mgeb.space (.ts → HLS), URL resolvida no servidor. PHP 7.4+ */
 
 /* ============================================================
  *  CONFIGURAÇÃO INTERNA — NUNCA EXPOR AO CLIENTE
- *  (só existem no PHP; o browser nunca as vê)
  * ============================================================ */
 define('MGEB_DOMAIN', 'https://mgeb.space');
 define('MGEB_USER',   'Feljo');
@@ -42,6 +41,15 @@ function pm_store_get(string $token): ?array {
     if (($data['expires'] ?? 0) < time()) { @unlink($file); return null; }
     return $data;
 }
+function pm_store_gc(): void {
+    if (random_int(1, 100) !== 1) return;
+    pm_store_init();
+    foreach ((array)@glob(STREAM_DIR . '/*.json') as $f) {
+        $raw = @file_get_contents($f);
+        $d = $raw ? json_decode($raw, true) : null;
+        if (!is_array($d) || ($d['expires'] ?? 0) < time()) @unlink($f);
+    }
+}
 
 function pm_is_id(string $id): bool {
     return (bool)preg_match('/^[0-9]{1,12}$/', $id);
@@ -52,10 +60,39 @@ function pm_mgeb_url(string $id): string {
     return MGEB_DOMAIN . '/movie/' . rawurlencode(MGEB_USER) . '/' . rawurlencode(MGEB_PASS) . '/' . rawurlencode($id) . '.ts';
 }
 
+/**
+ * Resolve o 302 do mgeb e devolve a URL final do CDN (.m3u8?t=...).
+ * Se falhar, devolve null (o embed cai para o ?go=<token>).
+ */
+function pm_resolve_cdn(string $mgebUrl): ?string {
+    if (!function_exists('curl_init')) return null;
+    $ch = curl_init($mgebUrl);
+    curl_setopt_array($ch, [
+        CURLOPT_NOBODY         => true,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_FOLLOWLOCATION => false,
+        CURLOPT_CONNECTTIMEOUT => 4,
+        CURLOPT_TIMEOUT        => 6,
+        CURLOPT_USERAGENT      => 'Mozilla/5.0 (Linux; Android 13)',
+        CURLOPT_REFERER        => MGEB_DOMAIN . '/',
+        CURLOPT_SSL_VERIFYPEER => true,
+    ]);
+    curl_exec($ch);
+    $status = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $loc    = (string)curl_getinfo($ch, CURLINFO_REDIRECT_URL);
+    curl_close($ch);
+
+    if ($status >= 300 && $status < 400 && $loc !== '' && preg_match('~^https?://~i', $loc)) {
+        return $loc;
+    }
+    // Se não houve redirect, talvez a própria URL já responda 200 (raro, mas possível)
+    if ($status === 200) return $mgebUrl;
+    return null;
+}
+
 /* ============================================================
- *  ENDPOINT ?go=<token>  →  302 para https://mgeb.space/.../ID.ts
- *  O mgeb.space responde com outro 302 para o CDN real
- *  O JW Player segue os DOIS redirects e toca o HLS
+ *  ENDPOINT ?go=<token>  →  302 para mgeb.space/.../ID.ts
+ *  (usado como FALLBACK se a resolução do CDN falhar)
  * ============================================================ */
 if (isset($_GET['go'])) {
     $token = (string)$_GET['go'];
@@ -66,10 +103,8 @@ if (isset($_GET['go'])) {
         echo 'Fonte indisponível';
         exit;
     }
-    // Redirect 1: nosso domínio → mgeb.space/.../ID.ts
-    // (o browser/JW NÃO vê Feljo nem senha — só o path)
     header('Cache-Control: private, no-store');
-    header('Referrer-Policy: no-referrer');
+    header('Referrer-Policy: strict-origin-when-cross-origin'); // <<< era no-referrer
     header('Location: ' . $entry['url'], true, 302);
     exit;
 }
@@ -107,7 +142,8 @@ if (isset($_GET['source']) && $_GET['source'] === '1') {
 
 /* ============================================================
  *  EMBED ?embed=<token>  →  HTML do player interno
- *  O JW Player recebe "?go=<token>" e segue os 302 até o CDN
+ *  O PHP resolve o 302 do mgeb AGORA e entrega a URL final do CDN
+ *  ao JW Player (type: hls) → toca direto, sem redirect no browser.
  * ============================================================ */
 if (isset($_GET['embed'])) {
     $token = (string)$_GET['embed'];
@@ -119,25 +155,31 @@ if (isset($_GET['embed'])) {
         exit;
     }
 
-    $self   = strtok($_SERVER['REQUEST_URI'] ?? '/', '?');
-    $goUrl  = $self . '?go=' . $token;   // JW usa isto → 302 → mgeb → 302 → CDN
-    $label  = $entry['label']  ?? 'HD';
-    $poster = $entry['poster'] ?? PLAYMOZ_POSTER_FALLBACK;
+    $self    = strtok($_SERVER['REQUEST_URI'] ?? '/', '?');
+    $goUrl   = $self . '?go=' . $token;             // fallback (302)
+    $mgebUrl = (string)($entry['url'] ?? '');
 
-    $urlJs    = json_encode($goUrl,  JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_UNESCAPED_SLASHES);
-    $labelJs  = json_encode($label,  JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT);
-    $posterJs = json_encode($poster, JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_UNESCAPED_SLASHES);
+    // >>> RESOLVE O CDN AGORA (evita o JW quebrar no 302)
+    $cdnUrl = $mgebUrl ? pm_resolve_cdn($mgebUrl) : null;
+    $playUrl = $cdnUrl ?: $goUrl;                    // usa CDN; se falhar, ?go=
+
+    $label   = $entry['label']  ?? 'HD';
+    $poster  = $entry['poster'] ?? PLAYMOZ_POSTER_FALLBACK;
+
+    $urlJs    = json_encode($playUrl, JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_UNESCAPED_SLASHES);
+    $labelJs  = json_encode($label,   JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT);
+    $posterJs = json_encode($poster,  JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_UNESCAPED_SLASHES);
 
     header('Content-Type: text/html; charset=utf-8');
     header('Cache-Control: private, no-store');
     header('X-Content-Type-Options: nosniff');
-    header('Referrer-Policy: strict-origin-when-cross-origin');
+    header('Referrer-Policy: strict-origin-when-cross-origin'); // <<< era no-referrer
     ?>
 <!DOCTYPE html>
 <html>
 <head>
 <script>
-/* Proteção anti-iframe sandbox (mesma do original) */
+/* Proteção anti-iframe sandbox */
 (function () {
   if (window.self === window.top) return;
   var sandboxFound = false;
@@ -173,6 +215,7 @@ if (isset($_GET['embed'])) {
 <meta charset="utf-8">
 <meta name="robots" content="noindex, nofollow">
 <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<meta name="referrer" content="strict-origin-when-cross-origin">
 <title>PlayMoz Player</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.3.1/jquery.min.js"></script>
 <script src="https://ssl.p.jwpcdn.com/player/v/8.6.2/jwplayer.js"></script>
@@ -222,11 +265,11 @@ function goBack(){
 
 <div style="background:#ff0000;padding:10px 20px;letter-spacing:1px;box-shadow:0 1px 15px #ff0000;color:#fff;font-family:'Open-Sans',sans-serif;margin:8px;border-radius:19px;font-weight:bold;font-size:11px;position:absolute;left:16px;z-index:9;cursor:pointer;" onclick="goBack()">Voltar</div>
 
-<!-- Download: mesmo ?go=, segue os 302 até ao ficheiro real -->
+<!-- Download: usa a URL do CDN (ou ?go= como fallback) -->
 <div id="down" style="right:16px;">
   <div class="download">Espelhar/Baixar</div>
   <ul id="down-list" class="down-list">
-    <li><a href="<?= htmlspecialchars($goUrl, ENT_QUOTES, 'UTF-8') ?>" target="_blank" rel="noopener noreferrer">Clique aqui</a></li>
+    <li><a href="<?= htmlspecialchars($playUrl, ENT_QUOTES, 'UTF-8') ?>" target="_blank" rel="noopener noreferrer">Clique aqui</a></li>
   </ul>
 </div>
 
@@ -262,7 +305,7 @@ player.setup({
   sources: [{
     file: <?= $urlJs ?>,
     label: <?= $labelJs ?>,
-    type: "hls",            /* mgeb .ts é HLS — o JW segue os 302 e toca */
+    type: "hls",            /* URL final já é .m3u8 do CDN → JW toca direto */
     default: "false"
   }],
   aspectratio: "16:9",
@@ -313,7 +356,7 @@ $base = $self . '?' . http_build_query(['type' => $type, 'id' => $id]);
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="referrer" content="no-referrer">
+<meta name="referrer" content="strict-origin-when-cross-origin">
 <meta name="robots" content="noindex,nofollow">
 <title>PlayMoz · Player</title>
 <style>
@@ -374,7 +417,7 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:var(--bg);color:#
 <body>
 
 <div id="pm-player-stage" aria-hidden="true">
-  <iframe id="pm-frame" allow="autoplay; encrypted-media; fullscreen; picture-in-picture" referrerpolicy="no-referrer"></iframe>
+  <iframe id="pm-frame" allow="autoplay; encrypted-media; fullscreen; picture-in-picture" referrerpolicy="strict-origin-when-cross-origin"></iframe>
 </div>
 
 <div id="pm-screen" role="dialog" aria-modal="true" aria-labelledby="pm-heading">
