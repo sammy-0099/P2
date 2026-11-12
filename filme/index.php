@@ -1,27 +1,22 @@
 <?php
-/** PlayMoz Player — fonte única mgeb.space (.ts) com credenciais protegidas no servidor. PHP 7.4+ */
+/** PlayMoz Player — fonte única mgeb.space (.ts), URL protegida por redirect 302. PHP 7.4+ */
 
 /* ============================================================
  *  CONFIGURAÇÃO INTERNA — NUNCA EXPOR AO CLIENTE
- *  (estas constantes só existem no PHP; o JS nunca as recebe)
  * ============================================================ */
 define('MGEB_DOMAIN', 'https://mgeb.space');
 define('MGEB_USER',   'Feljo');
 define('MGEB_PASS',   '22109f3c5de3aa6c');
 
-/* Token do player (JW Player) — mantido igual ao original */
 define('JWPLAYER_KEY', '64HPbvSQorQcd52B8XFuhMtEoitbvY/EXJmMBfKcXZQU2Rnn');
-
-/* PlayMoz */
 define('PLAYMOZ_SITE', 'https://playmoz.xyz');
 define('PLAYMOZ_POSTER_FALLBACK', 'https://i.imgur.com/XB5B8Md.jpeg');
 
-/* Store de tokens (URLs assinadas temporárias) */
 define('STREAM_DIR', sys_get_temp_dir() . '/pm_streams');
 define('STREAM_TTL', 1800); // 30 min
 
 /* ============================================================
- *  TOKEN STORE (ficheiro, sem cookies)
+ *  TOKEN STORE
  * ============================================================ */
 function pm_store_init(): void {
     if (!is_dir(STREAM_DIR)) @mkdir(STREAM_DIR, 0700, true);
@@ -56,39 +51,70 @@ function pm_store_gc(): void {
     }
 }
 
-/* ============================================================
- *  HELPERS
- * ============================================================ */
 function pm_is_id(string $id): bool {
     return (bool)preg_match('/^[0-9]{1,12}$/', $id);
 }
 
-/** URL REAL do mgeb (fica SÓ no PHP, nunca vai ao browser). */
+/** URL REAL (só PHP conhece). NUNCA vai ao browser. */
 function pm_mgeb_url(string $id): string {
     return MGEB_DOMAIN . '/movie/' . rawurlencode(MGEB_USER) . '/' . rawurlencode(MGEB_PASS) . '/' . rawurlencode($id) . '.ts';
 }
 
-/**
- * Cria um token público e devolve a URL do proxy interno (?stream=token).
- * O browser NUNCA vê MGEB_USER, MGEB_PASS nem a URL .ts real.
- */
-function pm_make_stream_token(string $id, string $label = 'HD', string $poster = PLAYMOZ_POSTER_FALLBACK): ?array {
-    if (!pm_is_id($id)) return null;
-    $token = bin2hex(random_bytes(16));
-    $ok = pm_store_put($token, [
-        'id'     => $id,
-        'url'    => pm_mgeb_url($id),
-        'label'  => $label,
-        'poster' => $poster,
-    ]);
-    if (!$ok) return null;
-    $self  = strtok($_SERVER['REQUEST_URI'] ?? '/', '?');
-    $embed = $self . '?embed=' . $token;
-    return ['token' => $token, 'embed' => $embed, 'label' => $label];
+/* ============================================================
+ *  ENDPOINT: ?go=<token>  → 302 redirect para o CDN do mgeb
+ *  O JW Player segue o 302 e toca HLS direto do CDN
+ *  (sem proxy → não quebra os segmentos .ts)
+ * ============================================================ */
+if (isset($_GET['go'])) {
+    $token = (string)$_GET['go'];
+    $entry = pm_store_get($token);
+    if (!is_array($entry) || empty($entry['url'])) {
+        http_response_code(404);
+        header('Content-Type: text/plain; charset=utf-8');
+        echo 'Fonte indisponível';
+        exit;
+    }
+    // Redireciona para a URL real. O browser/JW segue e toca direto.
+    header('Cache-Control: private, no-store');
+    header('Referrer-Policy: no-referrer');
+    header('Location: ' . $entry['url'], true, 302);
+    exit;
 }
 
 /* ============================================================
- *  EMBED (player HTML interno)
+ *  API: ?source=1 → devolve { ok, server: { embed: "?embed=..." } }
+ * ============================================================ */
+if (isset($_GET['source']) && $_GET['source'] === '1') {
+    header('Content-Type: application/json; charset=utf-8');
+    header('Cache-Control: no-store');
+
+    $id = (string)($_GET['id'] ?? '');
+    if (!pm_is_id($id)) { echo json_encode(['ok' => false, 'error' => 'id_required']); exit; }
+
+    $token = bin2hex(random_bytes(16));
+    if (!pm_store_put($token, [
+        'id'     => $id,
+        'url'    => pm_mgeb_url($id),
+        'label'  => 'HD',
+        'poster' => PLAYMOZ_POSTER_FALLBACK,
+    ])) {
+        echo json_encode(['ok' => false, 'error' => 'token_failed']); exit;
+    }
+
+    $self  = strtok($_SERVER['REQUEST_URI'] ?? '/', '?');
+    echo json_encode([
+        'ok'     => true,
+        'server' => [
+            'embed'   => $self . '?embed=' . $token,
+            'quality' => 'HD',
+        ],
+    ], JSON_UNESCAPED_SLASHES);
+    exit;
+}
+
+/* ============================================================
+ *  EMBED: ?embed=<token> — HTML do player interno
+ *  O JW recebe "?go=<token>" — o PHP faz 302 para o mgeb
  * ============================================================ */
 if (isset($_GET['embed'])) {
     $token = (string)$_GET['embed'];
@@ -100,15 +126,16 @@ if (isset($_GET['embed'])) {
         exit;
     }
 
-    // Proxy interno (o JW nunca vê a URL real do mgeb)
-    $self        = strtok($_SERVER['REQUEST_URI'] ?? '/', '?');
-    $proxyUrl    = $self . '?stream=' . $token;
-    $label       = $entry['label']  ?? 'HD';
-    $poster      = $entry['poster'] ?? PLAYMOZ_POSTER_FALLBACK;
+    $self     = strtok($_SERVER['REQUEST_URI'] ?? '/', '?');
+    $goUrl    = $self . '?go=' . $token;     // URL "pública" que o JW vai usar
+    $label    = $entry['label']  ?? 'HD';
+    $poster   = $entry['poster'] ?? PLAYMOZ_POSTER_FALLBACK;
 
-    $urlJs    = json_encode($proxyUrl, JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_UNESCAPED_SLASHES);
-    $labelJs  = json_encode($label,    JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT);
-    $posterJs = json_encode($poster,   JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_UNESCAPED_SLASHES);
+    // JW recebe a URL "?go=" → 302 → HLS real. Tipo HLS forçado.
+    $urlJs    = json_encode($goUrl, JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_UNESCAPED_SLASHES);
+    $labelJs  = json_encode($label, JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT);
+    $posterJs = json_encode($poster, JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_UNESCAPED_SLASHES);
+
     header('Content-Type: text/html; charset=utf-8');
     header('Cache-Control: private, no-store');
     header('X-Content-Type-Options: nosniff');
@@ -118,7 +145,7 @@ if (isset($_GET['embed'])) {
 <html>
 <head>
 <script>
-/* Proteção anti-iframe sandbox (mesma do original) */
+/* Proteção anti-iframe sandbox */
 (function () {
   if (window.self === window.top) return;
   var sandboxFound = false;
@@ -171,7 +198,6 @@ if (isset($_GET['embed'])) {
  .down-list li a { color:#fff; text-decoration:none; font-family:"Open-Sans", sans-serif; font-size:18px; width:100% }
  .jw-icon.jw-icon-inline.jw-button-color.jw-reset.jw-icon-rewind { display:none; }
 
- /* Overlay de erro */
  #pm-err{position:fixed;inset:0;background:#000;display:none;align-items:center;justify-content:center;z-index:20;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
  #pm-err.on{display:flex}
  #pm-err .box{background:linear-gradient(160deg,#1a1d26,#0f1117);border:1px solid #2a2e39;border-radius:22px;padding:30px 26px;max-width:360px;width:calc(100% - 40px);text-align:center;box-shadow:0 30px 90px rgba(0,0,0,.75);animation:pmIn2 .4s cubic-bezier(.2,.9,.3,1.15)}
@@ -204,13 +230,11 @@ function goBack(){
 
 <div style="background:#ff0000;padding:10px 20px;letter-spacing:1px;box-shadow:0 1px 15px #ff0000;color:#fff;font-family:'Open-Sans',sans-serif;margin:8px;border-radius:19px;font-weight:bold;font-size:11px;position:absolute;left:16px;z-index:9;cursor:pointer;" onclick="goBack()">Voltar</div>
 
-<div id="btn_try" style="background:#333;padding:10px 20px;letter-spacing:1px;box-shadow:0 1px 15px #333;color:#fff;font-family:'Open-Sans',sans-serif;margin:8px;border-radius:19px;font-weight:bold;font-size:11px;position:absolute;left:100px;z-index:9;display:none;cursor:pointer;" onclick="window.location.reload()">Tentar novamente</div>
-
-<!-- Download via proxy (URL real protegida) -->
+<!-- Download: usa o mesmo ?go= (302 para o arquivo real) -->
 <div id="down" style="right:16px;">
   <div class="download">Espelhar/Baixar</div>
   <ul id="down-list" class="down-list">
-    <li><a href="<?= htmlspecialchars($proxyUrl . '&download=1', ENT_QUOTES, 'UTF-8') ?>" target="_blank" rel="noopener noreferrer">Clique aqui</a></li>
+    <li><a href="<?= htmlspecialchars($goUrl, ENT_QUOTES, 'UTF-8') ?>" target="_blank" rel="noopener noreferrer">Clique aqui</a></li>
   </ul>
 </div>
 
@@ -246,7 +270,7 @@ player.setup({
   sources: [{
     file: <?= $urlJs ?>,
     label: <?= $labelJs ?>,
-    type: (/\.m3u8(?:[?#]|$)/i.test(<?= $urlJs ?>) || /\.ts(?:[?#]|$)/i.test(<?= $urlJs ?>) ? "hls" : "mp4"),
+    type: "hls",            /* mgeb .ts é HLS — força HLS sempre */
     default: "false"
   }],
   aspectratio: "16:9",
@@ -277,133 +301,10 @@ player.addButton('<svg xmlns="http://www.w3.org/2000/svg" class="jw-svg-icon jw-
 }
 
 /* ============================================================
- *  PROXY STREAM (esconde a URL real do mgeb + credenciais)
+ *  TELA PRINCIPAL
  * ============================================================ */
-if (isset($_GET['stream'])) {
-    $token = (string)$_GET['stream'];
-    $entry = pm_store_get($token);
-    if (!is_array($entry)) { http_response_code(404); exit('Fonte indisponível'); }
-
-    $url = (string)($entry['url'] ?? '');
-    if (!preg_match('~^https?://~i', $url) || !function_exists('curl_init')) {
-        http_response_code(502); exit('Fonte inválida');
-    }
-
-    $range = $_SERVER['HTTP_RANGE'] ?? '';
-    if ($range !== '' && !preg_match('/^bytes=\d*-\d*$/', $range)) {
-        http_response_code(416); exit;
-    }
-
-    // HEAD para descobrir Content-Type do mgeb
-    $headCh = curl_init($url);
-    curl_setopt_array($headCh, [
-        CURLOPT_NOBODY         => true,
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_FOLLOWLOCATION => true,
-        CURLOPT_MAXREDIRS      => 3,
-        CURLOPT_CONNECTTIMEOUT => 5,
-        CURLOPT_TIMEOUT        => 8,
-        CURLOPT_USERAGENT      => 'Mozilla/5.0',
-        CURLOPT_REFERER        => 'https://' . (parse_url(MGEB_DOMAIN, PHP_URL_HOST) ?: 'mgeb.space') . '/',
-        CURLOPT_SSL_VERIFYPEER => true,
-    ]);
-    curl_exec($headCh);
-    $remoteCtype = (string)curl_getinfo($headCh, CURLINFO_CONTENT_TYPE);
-    $remoteLen   = (int)curl_getinfo($headCh, CURLINFO_CONTENT_LENGTH_DOWNLOAD);
-    curl_close($headCh);
-
-    if (stripos($remoteCtype, 'video/') === 0) {
-        $ctype = $remoteCtype;
-    } elseif (stripos($remoteCtype, 'mpegurl') !== false || stripos($remoteCtype, 'm3u8') !== false) {
-        $ctype = 'application/vnd.apple.mpegurl';
-    } elseif (stripos($remoteCtype, 'mp2t') !== false || stripos($remoteCtype, 'ts') !== false) {
-        $ctype = 'video/mp2t';
-    } else {
-        // mgeb devolve .ts como HLS — força tipo HLS para o JW Player
-        $ctype = 'application/vnd.apple.mpegurl';
-    }
-
-    if (isset($_GET['download'])) {
-        header('Content-Disposition: attachment; filename="PlayMoz-filme.ts"');
-    }
-    if ($range === '') {
-        header('Content-Type: ' . $ctype);
-        header('Accept-Ranges: bytes');
-        if ($remoteLen > 0) header('Content-Length: ' . $remoteLen);
-    }
-    header('Cache-Control: private, no-store');
-    header('X-Content-Type-Options: nosniff');
-    header('Access-Control-Allow-Origin: *');
-
-    $ch = curl_init($url);
-    curl_setopt_array($ch, [
-        CURLOPT_FOLLOWLOCATION => true,
-        CURLOPT_MAXREDIRS      => 3,
-        CURLOPT_CONNECTTIMEOUT => 8,
-        CURLOPT_TIMEOUT        => 0,
-        CURLOPT_RETURNTRANSFER => false,
-        CURLOPT_USERAGENT      => 'Mozilla/5.0',
-        CURLOPT_REFERER        => 'https://' . (parse_url(MGEB_DOMAIN, PHP_URL_HOST) ?: 'mgeb.space') . '/',
-        CURLOPT_SSL_VERIFYPEER => true,
-        CURLOPT_HTTPHEADER     => array_merge(
-            ['Accept: application/vnd.apple.mpegurl,video/*;q=0.9,*/*;q=0.8', 'Accept-Encoding: identity'],
-            $range ? ['Range: ' . $range] : []
-        ),
-        CURLOPT_HEADERFUNCTION => function ($ch, $line) {
-            $trim = trim($line);
-            if (preg_match('~^HTTP/\S+\s+(\d+)~i', $trim, $m)) {
-                $status = (int)$m[1];
-                if (in_array($status, [200, 206, 416], true)) http_response_code($status);
-                else http_response_code(502);
-            } elseif (preg_match('/^(content-type|content-length|content-range|accept-ranges):/i', $trim)) {
-                if (stripos($trim, 'content-type:') === 0) return strlen($line); // ctype já definido
-                header($trim, true);
-            }
-            return strlen($line);
-        },
-        CURLOPT_WRITEFUNCTION  => function ($ch, $chunk) {
-            $status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-            if (!in_array($status, [200, 206], true)) return 0;
-            echo $chunk;
-            if (function_exists('flush')) flush();
-            return strlen($chunk);
-        },
-    ]);
-    curl_exec($ch);
-    if (curl_errno($ch)) error_log('PlayMoz stream: ' . curl_error($ch));
-    curl_close($ch);
-    exit;
-}
-
-/* ============================================================
- *  API: ?source=1 → devolve {ok:true, server:{embed:...}}
- *  (mantém o formato que o JS do player espera)
- * ============================================================ */
-if (isset($_GET['source']) && $_GET['source'] === '1') {
-    header('Content-Type: application/json; charset=utf-8');
-    header('Cache-Control: no-store');
-
-    $id = (string)($_GET['id'] ?? '');
-    if (!pm_is_id($id)) { echo json_encode(['ok' => false, 'error' => 'id_required']); exit; }
-
-    $made = pm_make_stream_token($id, 'HD');
-    if (!$made) { echo json_encode(['ok' => false, 'error' => 'token_failed']); exit; }
-
-    echo json_encode([
-        'ok'     => true,
-        'server' => [
-            'embed'   => $made['embed'],
-            'quality' => 'HD',
-        ],
-    ], JSON_UNESCAPED_SLASHES);
-    exit;
-}
-
-/* ============================================================
- *  TELA PRINCIPAL (seletor)
- * ============================================================ */
-$id     = isset($_GET['id']) ? (string)$_GET['id'] : '';
-$type   = in_array($_GET['type'] ?? 'movie', ['movie', 'tv'], true) ? $_GET['type'] : 'movie';
+$id   = isset($_GET['id']) ? (string)$_GET['id'] : '';
+$type = in_array($_GET['type'] ?? 'movie', ['movie', 'tv'], true) ? $_GET['type'] : 'movie';
 
 if (!pm_is_id($id)) {
     http_response_code(400);
@@ -412,12 +313,8 @@ if (!pm_is_id($id)) {
     exit;
 }
 
-$self  = strtok($_SERVER['REQUEST_URI'] ?? '/', '?');
-$base  = $self . '?' . http_build_query(['type' => $type, 'id' => $id]);
-
-// Poster/título opcionais (não expõe nada sensível)
-$pmBackdrop     = '';
-$pmDisplayTitle = '';
+$self = strtok($_SERVER['REQUEST_URI'] ?? '/', '?');
+$base = $self . '?' . http_build_query(['type' => $type, 'id' => $id]);
 ?>
 <!doctype html>
 <html lang="pt-BR">
@@ -520,11 +417,10 @@ const PM_ID   = <?= (int)$id ?>;
 const PM_TYPE = <?= json_encode($type) ?>;
 
 const pmEl = id => document.getElementById(id);
-function pmEscape(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 const ICONS = {
-  play:   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 5 11 7-11 7V5Z"/></svg>',
-  arrow:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>',
-  alert:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg>'
+  play:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 5 11 7-11 7V5Z"/></svg>',
+  arrow: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>',
+  alert: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg>'
 };
 
 function pmModal(title, html, foot) {
