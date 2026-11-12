@@ -2,7 +2,16 @@
 /** PlayMoz Player — mgeb.space via stream_id, com mapeamento TMDB → stream_id. PHP 7.4+ */
 
 /* ============================================================
- *  CONFIGURAÇÃO INTERNA — NUNCA EXPOR AO CLIENTE
+ *  0) AMBIENTE — evita 500 por timeout/memória
+ * ============================================================ */
+@ini_set('display_errors', '0');       // não mostra erro ao cliente
+@ini_set('log_errors', '1');
+@set_time_limit(120);                   // 2 min (lista grande)
+@ini_set('memory_limit', '512M');
+@ini_set('max_execution_time', '120');
+
+/* ============================================================
+ *  1) CONFIGURAÇÃO INTERNA — NUNCA EXPOR AO CLIENTE
  * ============================================================ */
 define('MGEB_DOMAIN', 'https://mgeb.space');
 define('MGEB_USER',   'Feljo');
@@ -13,11 +22,19 @@ define('PLAYMOZ_SITE', 'https://playmoz.xyz');
 define('PLAYMOZ_POSTER_FALLBACK', 'https://i.imgur.com/XB5B8Md.jpeg');
 
 define('STREAM_DIR', sys_get_temp_dir() . '/pm_streams');
-define('STREAM_TTL', 1800);    // 30 min — tokens de sessão
-define('MAP_TTL',    21600);   // 6h — cache do mapa TMDB→stream_id
+define('STREAM_TTL', 1800);    // 30 min
+define('MAP_TTL',    21600);   // 6h
 
 /* ============================================================
- *  TOKEN STORE
+ *  2) LOG LOCAL (para debugar 500 sem expor ao cliente)
+ * ============================================================ */
+function pm_log(string $msg): void {
+    if (!is_dir(STREAM_DIR)) @mkdir(STREAM_DIR, 0700, true);
+    @file_put_contents(STREAM_DIR . '/error.log', '[' . date('c') . '] ' . $msg . "\n", FILE_APPEND | LOCK_EX);
+}
+
+/* ============================================================
+ *  3) TOKEN STORE
  * ============================================================ */
 function pm_store_init(): void {
     if (!is_dir(STREAM_DIR)) @mkdir(STREAM_DIR, 0700, true);
@@ -46,6 +63,7 @@ function pm_store_gc(): void {
     if (random_int(1, 100) !== 1) return;
     pm_store_init();
     foreach ((array)@glob(STREAM_DIR . '/*.json') as $f) {
+        if (basename($f) === 'error.log') continue;
         $raw = @file_get_contents($f);
         $d = $raw ? json_decode($raw, true) : null;
         if (!is_array($d) || ($d['expires'] ?? 0) < time()) @unlink($f);
@@ -57,7 +75,7 @@ function pm_is_id(string $id): bool {
 }
 
 /* ============================================================
- *  CACHE DA LISTA get_vod_streams (TMDB → stream_id)
+ *  4) CACHE DA LISTA get_vod_streams (TMDB → stream_id)
  * ============================================================ */
 function pm_map_cache_file(): string {
     pm_store_init();
@@ -65,9 +83,10 @@ function pm_map_cache_file(): string {
 }
 
 /**
- * Baixa a lista completa de filmes do mgeb e monta:
- *   tmdb_id => stream_id
- * Guarda em cache por 6h.
+ * Baixa get_vod_streams e monta tmdb_id => stream_id.
+ * - Guarda SÓ o mapa (não guarda a lista inteira) — economiza memória/disco.
+ * - Cache 6h.
+ * - Se falhar, devolve [] (não rebenta).
  */
 function pm_load_vod_map(): array {
     $file = pm_map_cache_file();
@@ -75,7 +94,7 @@ function pm_load_vod_map(): array {
         $cached = json_decode((string)@file_get_contents($file), true);
         if (is_array($cached) && $cached !== []) return $cached;
     }
-    if (!function_exists('curl_init')) return [];
+    if (!function_exists('curl_init')) { pm_log('curl indisponível'); return []; }
 
     $url = MGEB_DOMAIN . '/player_api.php?username=' . rawurlencode(MGEB_USER)
          . '&password=' . rawurlencode(MGEB_PASS) . '&action=get_vod_streams';
@@ -83,20 +102,23 @@ function pm_load_vod_map(): array {
     $ch = curl_init($url);
     curl_setopt_array($ch, [
         CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_CONNECTTIMEOUT => 10,
-        CURLOPT_TIMEOUT        => 40,   // a lista é grande — dá tempo
+        CURLOPT_CONNECTTIMEOUT => 15,
+        CURLOPT_TIMEOUT        => 90,      // lista pode ser grande
         CURLOPT_USERAGENT      => 'Mozilla/5.0 (Linux; Android 13)',
         CURLOPT_REFERER        => MGEB_DOMAIN . '/',
         CURLOPT_SSL_VERIFYPEER => true,
+        CURLOPT_ENCODING       => '',      // aceita gzip (reduz 80%)
     ]);
-    $raw = curl_exec($ch);
+    $raw    = curl_exec($ch);
     $status = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $err    = curl_error($ch);
     curl_close($ch);
 
-    if (!is_string($raw) || $raw === '' || $status < 200 || $status >= 300) return [];
+    if (!is_string($raw) || $raw === '') { pm_log("get_vod_streams vazio (http=$status err=$err)"); return []; }
+    if ($status < 200 || $status >= 300) { pm_log("get_vod_streams http=$status"); return []; }
 
     $arr = json_decode($raw, true);
-    if (!is_array($arr)) return [];
+    if (!is_array($arr)) { pm_log('get_vod_streams JSON inválido'); return []; }
 
     $map = [];
     foreach ($arr as $item) {
@@ -107,15 +129,15 @@ function pm_load_vod_map(): array {
             $map[$tmdb] = $sid;
         }
     }
-
-    // Só grava cache se conseguiu mapear algo
     if ($map !== []) {
         @file_put_contents($file, json_encode($map), LOCK_EX);
+        pm_log('map_vod criado com ' . count($map) . ' itens');
+    } else {
+        pm_log('map_vod vazio (nenhum tmdb_id encontrado)');
     }
     return $map;
 }
 
-/** Igual, mas para séries (get_series → tmdb_id → series_id). */
 function pm_load_series_map(): array {
     $file = STREAM_DIR . '/map_series.json';
     if (is_file($file) && (filemtime($file) + MAP_TTL) > time()) {
@@ -130,18 +152,18 @@ function pm_load_series_map(): array {
     $ch = curl_init($url);
     curl_setopt_array($ch, [
         CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_CONNECTTIMEOUT => 10,
-        CURLOPT_TIMEOUT        => 40,
+        CURLOPT_CONNECTTIMEOUT => 15,
+        CURLOPT_TIMEOUT        => 90,
         CURLOPT_USERAGENT      => 'Mozilla/5.0 (Linux; Android 13)',
         CURLOPT_REFERER        => MGEB_DOMAIN . '/',
         CURLOPT_SSL_VERIFYPEER => true,
+        CURLOPT_ENCODING       => '',
     ]);
-    $raw = curl_exec($ch);
+    $raw    = curl_exec($ch);
     $status = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
     curl_close($ch);
 
     if (!is_string($raw) || $raw === '' || $status < 200 || $status >= 300) return [];
-
     $arr = json_decode($raw, true);
     if (!is_array($arr)) return [];
 
@@ -158,17 +180,25 @@ function pm_load_series_map(): array {
     return $map;
 }
 
+/** URL REAL do mgeb — só o PHP conhece. */
+function pm_mgeb_url(string $streamId, string $type = 'movie'): string {
+    $kind = ($type === 'tv') ? 'series' : 'movie';
+    return MGEB_DOMAIN . '/' . $kind . '/' . rawurlencode(MGEB_USER) . '/' . rawurlencode(MGEB_PASS)
+         . '/' . rawurlencode($streamId) . '.ts';
+}
+
 /**
- * Traduz o ID recebido (TMDB ou stream_id) para o stream_id interno do mgeb.
- * 1º tenta usar direto como stream_id (HEAD rápido).
- * 2º se falhar, procura no mapa TMDB → stream_id.
+ * Traduz ID (TMDB ou stream_id) para stream_id interno.
+ * - 1º valida direto como stream_id (HEAD rápido, timeout 4s)
+ * - 2º procura no mapa TMDB → stream_id
+ * - Se não achar, devolve null (o endpoint responde JSON erro, não 500)
  */
 function pm_resolve_stream_id(string $givenId, string $type = 'movie'): ?string {
     if (!pm_is_id($givenId)) return null;
 
-    // 1) Tenta direto como stream_id
-    $url = pm_mgeb_url($givenId, $type);
+    // 1) Tenta direto
     if (function_exists('curl_init')) {
+        $url = pm_mgeb_url($givenId, $type);
         $ch = curl_init($url);
         curl_setopt_array($ch, [
             CURLOPT_NOBODY         => true,
@@ -184,25 +214,22 @@ function pm_resolve_stream_id(string $givenId, string $type = 'movie'): ?string 
         $status = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
         curl_close($ch);
         if ($status === 200 || ($status >= 300 && $status < 400)) {
-            return $givenId;   // já é stream_id válido
+            return $givenId;
         }
     }
 
-    // 2) Procura no mapa TMDB → stream_id
-    $map = ($type === 'tv') ? pm_load_series_map() : pm_load_vod_map();
-    if (isset($map[$givenId])) return (string)$map[$givenId];
+    // 2) Mapa TMDB → stream_id
+    try {
+        $map = ($type === 'tv') ? pm_load_series_map() : pm_load_vod_map();
+        if (isset($map[$givenId])) return (string)$map[$givenId];
+    } catch (\Throwable $e) {
+        pm_log('resolve_stream_id: ' . $e->getMessage());
+    }
 
     return null;
 }
 
-/** URL REAL do mgeb — só o PHP conhece. */
-function pm_mgeb_url(string $streamId, string $type = 'movie'): string {
-    $kind = ($type === 'tv') ? 'series' : 'movie';
-    return MGEB_DOMAIN . '/' . $kind . '/' . rawurlencode(MGEB_USER) . '/' . rawurlencode(MGEB_PASS)
-         . '/' . rawurlencode($streamId) . '.ts';
-}
-
-/** Resolve o 302 do mgeb e devolve a URL final do CDN (.m3u8?t=...). */
+/** Resolve o 302 do mgeb → URL final do CDN (.m3u8?t=...). */
 function pm_resolve_cdn(string $mgebUrl): ?string {
     if (!function_exists('curl_init')) return null;
     $ch = curl_init($mgebUrl);
@@ -221,16 +248,16 @@ function pm_resolve_cdn(string $mgebUrl): ?string {
     $loc    = (string)curl_getinfo($ch, CURLINFO_REDIRECT_URL);
     curl_close($ch);
 
-    if ($status >= 300 && $status < 400 && $loc !== '' && preg_match('~^https?://~i', $loc)) {
-        return $loc;
-    }
+    if ($status >= 300 && $status < 400 && $loc !== '' && preg_match('~^https?://~i', $loc)) return $loc;
     if ($status === 200) return $mgebUrl;
     return null;
 }
 
 /* ============================================================
- *  ENDPOINT ?go=<token>  →  302 para mgeb.space/.../STREAM_ID.ts
+ *  5) ENDPOINTS
  * ============================================================ */
+
+/* 5.1) ?go=<token> → 302 para mgeb */
 if (isset($_GET['go'])) {
     $token = (string)$_GET['go'];
     $entry = pm_store_get($token);
@@ -246,59 +273,61 @@ if (isset($_GET['go'])) {
     exit;
 }
 
-/* ============================================================
- *  API ?source=1  →  JSON { ok, server: { embed } }
- *  Recebe ?id=<TMDB_ID> (ou stream_id) e traduz para stream_id.
- * ============================================================ */
+/* 5.2) ?source=1 → JSON { ok, server: { embed, stream_id } } */
 if (isset($_GET['source']) && $_GET['source'] === '1') {
     header('Content-Type: application/json; charset=utf-8');
     header('Cache-Control: no-store');
 
-    $id   = (string)($_GET['id'] ?? '');
-    $type = in_array($_GET['type'] ?? 'movie', ['movie', 'tv'], true) ? $_GET['type'] : 'movie';
+    try {
+        $id   = (string)($_GET['id'] ?? '');
+        $type = in_array($_GET['type'] ?? 'movie', ['movie', 'tv'], true) ? $_GET['type'] : 'movie';
 
-    if (!pm_is_id($id)) {
-        echo json_encode(['ok' => false, 'error' => 'id_required']); exit;
-    }
+        if (!pm_is_id($id)) {
+            echo json_encode(['ok' => false, 'error' => 'id_required']); exit;
+        }
 
-    $streamId = pm_resolve_stream_id($id, $type);
-    if (!$streamId) {
+        $streamId = pm_resolve_stream_id($id, $type);
+        if (!$streamId) {
+            echo json_encode([
+                'ok'    => false,
+                'error' => 'stream_not_found',
+                'tmdb'  => $id,
+                'type'  => $type,
+            ]); exit;
+        }
+
+        $token = bin2hex(random_bytes(16));
+        if (!pm_store_put($token, [
+            'id'       => $streamId,
+            'original' => $id,
+            'type'     => $type,
+            'url'      => pm_mgeb_url($streamId, $type),
+            'label'    => 'HD',
+            'poster'   => PLAYMOZ_POSTER_FALLBACK,
+        ])) {
+            echo json_encode(['ok' => false, 'error' => 'token_failed']); exit;
+        }
+
+        $self = strtok($_SERVER['REQUEST_URI'] ?? '/', '?');
         echo json_encode([
-            'ok'    => false,
-            'error' => 'stream_not_found',
-            'tmdb'  => $id,
-            'type'  => $type,
-        ]); exit;
-    }
+            'ok'     => true,
+            'server' => [
+                'embed'     => $self . '?embed=' . $token,
+                'quality'   => 'HD',
+                'stream_id' => $streamId,
+                'tmdb_id'   => $id,
+            ],
+        ], JSON_UNESCAPED_SLASHES);
+        exit;
 
-    $token = bin2hex(random_bytes(16));
-    if (!pm_store_put($token, [
-        'id'        => $streamId,
-        'original'  => $id,
-        'type'      => $type,
-        'url'       => pm_mgeb_url($streamId, $type),
-        'label'     => 'HD',
-        'poster'    => PLAYMOZ_POSTER_FALLBACK,
-    ])) {
-        echo json_encode(['ok' => false, 'error' => 'token_failed']); exit;
+    } catch (\Throwable $e) {
+        pm_log('source=1 fatal: ' . $e->getMessage() . ' @ ' . $e->getFile() . ':' . $e->getLine());
+        http_response_code(200); // devolve JSON, não 500
+        echo json_encode(['ok' => false, 'error' => 'internal_error']); exit;
     }
-
-    $self = strtok($_SERVER['REQUEST_URI'] ?? '/', '?');
-    echo json_encode([
-        'ok'     => true,
-        'server' => [
-            'embed'     => $self . '?embed=' . $token,
-            'quality'   => 'HD',
-            'stream_id' => $streamId,
-            'tmdb_id'   => $id,
-        ],
-    ], JSON_UNESCAPED_SLASHES);
-    exit;
 }
 
-/* ============================================================
- *  EMBED ?embed=<token>  →  HTML do player interno
- * ============================================================ */
+/* 5.3) ?embed=<token> → HTML do player */
 if (isset($_GET['embed'])) {
     $token = (string)$_GET['embed'];
     $entry = pm_store_get($token);
@@ -335,21 +364,9 @@ if (isset($_GET['embed'])) {
 (function () {
   if (window.self === window.top) return;
   var sandboxFound = false;
-  try {
-    var embeddingFrame = window.frameElement;
-    sandboxFound = !!(embeddingFrame && embeddingFrame.hasAttribute('sandbox'));
-  } catch (_) {}
-  if (!sandboxFound) {
-    var originVal = window.origin || (window.location && window.location.origin);
-    if (originVal === 'null' || originVal === null) sandboxFound = true;
-  }
-  if (!sandboxFound) {
-    try { document.domain = document.domain; }
-    catch (e) {
-      var message = String(e && e.message || '').toLowerCase();
-      if (message.indexOf('sandbox') !== -1 || message.indexOf('forbidden') !== -1) sandboxFound = true;
-    }
-  }
+  try { var f = window.frameElement; sandboxFound = !!(f && f.hasAttribute('sandbox')); } catch (_) {}
+  if (!sandboxFound) { var o = window.origin || (window.location && window.location.origin); if (o === 'null' || o === null) sandboxFound = true; }
+  if (!sandboxFound) { try { document.domain = document.domain; } catch (e) { var m = String(e && e.message || '').toLowerCase(); if (m.indexOf('sandbox') !== -1 || m.indexOf('forbidden') !== -1) sandboxFound = true; } }
   if (!sandboxFound) return;
   function show() {
     if (document.getElementById('pm-protection')) return;
@@ -440,12 +457,7 @@ function pmHideErr(){ var el = document.getElementById('pm-err'); if (el) el.cla
 
 var player = jwplayer("ani-player");
 player.setup({
-  sources: [{
-    file: <?= $urlJs ?>,
-    label: <?= $labelJs ?>,
-    type: "hls",
-    default: "false"
-  }],
+  sources: [{ file: <?= $urlJs ?>, label: <?= $labelJs ?>, type: "hls", default: "false" }],
   aspectratio: "16:9",
   startparam: "start",
   primary: "html5",
@@ -473,7 +485,7 @@ player.addButton('<svg xmlns="http://www.w3.org/2000/svg" class="jw-svg-icon jw-
 }
 
 /* ============================================================
- *  TELA PRINCIPAL
+ *  6) TELA PRINCIPAL
  * ============================================================ */
 $id   = isset($_GET['id']) ? (string)$_GET['id'] : '';
 $type = in_array($_GET['type'] ?? 'movie', ['movie', 'tv'], true) ? $_GET['type'] : 'movie';
@@ -561,23 +573,18 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:var(--bg);color:#
   <section class="pm-modal">
     <header class="pm-head">
       <div class="pm-logo">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <rect x="3" y="3" width="18" height="18" rx="5"/>
-          <path d="m10 8 6 4-6 4V8Z"/>
-        </svg>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="5"/><path d="m10 8 6 4-6 4V8Z"/></svg>
       </div>
       <div class="pm-head-text">
         <small>PLAYMOZ · REPRODUÇÃO</small>
         <h1 id="pm-heading">A carregar fonte...</h1>
       </div>
     </header>
-
     <div class="pm-body" id="pm-content">
       <div class="pm-spin"></div>
       <h2>A preparar o vídeo</h2>
       <p>Estamos a preparar a experiência de reprodução.</p>
     </div>
-
     <footer class="pm-foot" id="pm-foot">Aguarda um momento...</footer>
   </section>
 </div>
@@ -594,123 +601,41 @@ const ICONS = {
   arrow: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>',
   alert: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg>'
 };
+function pmModal(t,h,f){ pmEl('pm-heading').textContent=t; pmEl('pm-content').innerHTML=h; pmEl('pm-foot').textContent=f||''; pmEl('pm-screen').classList.remove('off'); }
+function pmLoading(){ pmModal('A preparar a reprodução','<div class="pm-spin"></div><h2>A estabelecer ligação segura</h2><p>Estamos a verificar a disponibilidade do vídeo.</p>','A ligação pode demorar alguns instantes.'); }
+function pmValidUrl(u){ try { const x=new URL(u,location.href); return x.protocol==='https:'||x.protocol==='http:'; } catch { return false; } }
+function pmOpenInFrame(url){ const s=pmEl('pm-player-stage'), f=pmEl('pm-frame'); pmEl('pm-screen').classList.add('off'); s.classList.add('on'); s.setAttribute('aria-hidden','false'); setTimeout(()=>{ f.src=url; },30); }
+function pmCloseFrame(){ const s=pmEl('pm-player-stage'), f=pmEl('pm-frame'); s.classList.remove('on'); s.setAttribute('aria-hidden','true'); f.src='about:blank'; pmShowServers(); }
 
-function pmModal(title, html, foot) {
-  pmEl('pm-heading').textContent = title;
-  pmEl('pm-content').innerHTML = html;
-  pmEl('pm-foot').textContent = foot || '';
-  pmEl('pm-screen').classList.remove('off');
-}
-function pmLoading() {
-  pmModal('A preparar a reprodução',
-    '<div class="pm-spin"></div><h2>A estabelecer ligação segura</h2><p>Estamos a verificar a disponibilidade do vídeo.</p>',
-    'A ligação pode demorar alguns instantes.');
-}
-function pmValidUrl(u) {
-  try { const x = new URL(u, location.href); return x.protocol === 'https:' || x.protocol === 'http:'; }
-  catch { return false; }
-}
-function pmOpenInFrame(url) {
-  const stage = pmEl('pm-player-stage');
-  const frame = pmEl('pm-frame');
-  pmEl('pm-screen').classList.add('off');
-  stage.classList.add('on');
-  stage.setAttribute('aria-hidden','false');
-  setTimeout(() => { frame.src = url; }, 30);
-}
-function pmCloseFrame() {
-  const stage = pmEl('pm-player-stage');
-  const frame = pmEl('pm-frame');
-  stage.classList.remove('on');
-  stage.setAttribute('aria-hidden','true');
-  frame.src = 'about:blank';
-  pmShowServers();
-}
+let pmOpening=false;
+function pmShowServers(){ pmOpening=false; pmModal('Selecione o servidor','<h2>Pronto para assistir</h2><div class="pm-servers"><button class="pm-server-btn primary" type="button" id="pm-s1"><span class="pm-server-btn-icon">'+ICONS.play+'</span><span class="pm-server-btn-info"><strong>Servidor 1</strong><small>Reprodução directa · HD</small></span><span class="pm-server-btn-arrow">'+ICONS.arrow+'</span></button></div>','Escolha o servidor para iniciar a reprodução.'); pmEl('pm-s1').onclick=()=>pmLoadSource(); }
+function pmErrorSource(m){ pmOpening=false; pmShowServers(); pmEl('pm-foot').textContent=m||'Não conseguimos estabelecer ligação. Tenta novamente.'; }
 
-let pmOpening = false;
-function pmShowServers() {
-  pmOpening = false;
-  pmModal('Selecione o servidor',
-    '<h2>Pronto para assistir</h2><div class="pm-servers">'+
-      '<button class="pm-server-btn primary" type="button" id="pm-s1">'+
-        '<span class="pm-server-btn-icon">'+ICONS.play+'</span>'+
-        '<span class="pm-server-btn-info"><strong>Servidor 1</strong><small>Reprodução directa · HD</small></span>'+
-        '<span class="pm-server-btn-arrow">'+ICONS.arrow+'</span>'+
-      '</button>'+
-    '</div>',
-    'Escolha o servidor para iniciar a reprodução.');
-  pmEl('pm-s1').onclick = () => pmLoadSource();
-}
-
-function pmErrorSource(message) {
-  pmOpening = false;
-  pmShowServers();
-  pmEl('pm-foot').textContent = message || 'Não conseguimos estabelecer ligação. Tenta novamente.';
-}
-
-async function pmLoadSource() {
-  if (pmOpening) return;
-  pmOpening = true;
-  pmLoading();
+async function pmLoadSource(){
+  if (pmOpening) return; pmOpening=true; pmLoading();
   try {
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 40000);   // 40s: mapeamento + resolução de CDN
+    const ctrl=new AbortController(); const timer=setTimeout(()=>ctrl.abort(),90000); // 90s: 1ª vez baixa lista
     let response;
-    try {
-      response = await fetch(new URL(PM_BASE + '&source=1', window.location.href).href, {
-        cache: 'no-store',
-        credentials: 'same-origin',
-        signal: ctrl.signal,
-      });
-    } finally { clearTimeout(timer); }
-
-    const data = await response.json().catch(() => {
-      throw new Error('O servidor não devolveu uma resposta JSON válida (HTTP ' + response.status + ').');
-    });
-
-    if (!response.ok || !data.ok) {
-      const err = (data && data.error) || 'Fonte indisponível';
-      if (err === 'stream_not_found') {
-        throw new Error('Título não encontrado no catálogo. Verifica o ID TMDB.');
-      }
+    try { response=await fetch(new URL(PM_BASE+'&source=1',window.location.href).href,{cache:'no-store',credentials:'same-origin',signal:ctrl.signal}); }
+    finally { clearTimeout(timer); }
+    const data=await response.json().catch(()=>{ throw new Error('O servidor não devolveu JSON válido (HTTP '+response.status+').'); });
+    if (!response.ok||!data.ok) {
+      const err=(data&&data.error)||'Fonte indisponível';
+      if (err==='stream_not_found') throw new Error('Título não encontrado no catálogo. Verifica o ID TMDB.');
+      if (err==='internal_error') throw new Error('Erro interno no servidor. Tenta novamente.');
       throw new Error(err);
     }
-
-    const embed = data.server && data.server.embed;
-    if (!embed || !pmValidUrl(embed)) throw new Error('Resposta inválida do servidor.');
-
-    pmOpenInFrame(embed);
-    pmOpening = false;
-  } catch (e) {
-    pmErrorSource(
-      e.name === 'AbortError' ? 'A ligação demorou demasiado. Tenta novamente.'
-      : (e.message === 'Failed to fetch' ? 'Falha de rede ou pedido bloqueado.'
-      : (e.message || 'Não foi possível iniciar o vídeo.'))
-    );
+    const embed=data.server&&data.server.embed;
+    if (!embed||!pmValidUrl(embed)) throw new Error('Resposta inválida do servidor.');
+    pmOpenInFrame(embed); pmOpening=false;
+  } catch(e){
+    pmErrorSource(e.name==='AbortError'?'A ligação demorou demasiado. Tenta novamente.':(e.message==='Failed to fetch'?'Falha de rede ou pedido bloqueado.':(e.message||'Não foi possível iniciar o vídeo.')));
   }
 }
-
-function pmScan() {
-  if (!PM_ID) {
-    pmModal('ID em falta', '<div class="pm-alert">'+ICONS.alert+'</div><h2>Indica o ID TMDB</h2>', '');
-    return;
-  }
-  pmShowServers();
-}
-
-window.addEventListener('message', (ev) => {
-  if (ev && ev.data && ev.data.type === 'playmoz-close') {
-    pmCloseFrame();
-  }
-});
-
-document.addEventListener('keydown', e => {
-  if (e.key === 'Escape' && pmEl('pm-player-stage').classList.contains('on')) {
-    pmCloseFrame();
-  }
-});
-
-document.addEventListener('DOMContentLoaded', pmScan);
+function pmScan(){ if (!PM_ID) { pmModal('ID em falta','<div class="pm-alert">'+ICONS.alert+'</div><h2>Indica o ID TMDB</h2>',''); return; } pmShowServers(); }
+window.addEventListener('message',(ev)=>{ if (ev&&ev.data&&ev.data.type==='playmoz-close') pmCloseFrame(); });
+document.addEventListener('keydown',(e)=>{ if (e.key==='Escape'&&pmEl('pm-player-stage').classList.contains('on')) pmCloseFrame(); });
+document.addEventListener('DOMContentLoaded',pmScan);
 </script>
 <?php
 $pmRefHost = strtolower((string)(parse_url($_SERVER["HTTP_REFERER"] ?? "", PHP_URL_HOST) ?: ""));
@@ -724,10 +649,7 @@ var tempo = 120000;
 var ultimo = 0;
 document.addEventListener('click', function() {
     var agora = Date.now();
-    if (agora - ultimo >= tempo) {
-        window.open(link, '_blank');
-        ultimo = agora;
-    }
+    if (agora - ultimo >= tempo) { window.open(link, '_blank'); ultimo = agora; }
 });
 </script>
 <?php endif; ?>
