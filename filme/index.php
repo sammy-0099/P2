@@ -1,659 +1,1064 @@
 <?php
-/**
- * PlayMoz — Site completo de filmes num único arquivo PHP
- * Baseado na API Xtream do mgeb.space (com paginação para evitar timeout)
- */
+/** PlayMoz: TMDB -> IMDb, seletor de fonte e player remoto. PHP 7.4+ */
+require_once dirname(__DIR__) . '/redeflix-resolver.php';
+define('TMDB_API_KEY', getenv('TMDB_API_KEY') ?: 'b73f5479e8443355e40462afe494fc52');
+define('PLAYER_BASE', 'http://fimoo.site/token-expires/player/f/?i=');
+define('PLAYER_ORIGIN', 'http://fimoo.site');
+define('BLOCKED_HOST', '');
+define('EMBED_BASE', 'https://apps.golplay.site/');
+define('SITE_BASE', ((isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https://' : 'http://') . ($_SERVER['HTTP_HOST'] ?? 'localhost'));
 
-/* ============================================================
- *  CONFIGURAÇÃO — credenciais (só PHP conhece)
- * ============================================================ */
-define('MGEB_DOMAIN', 'https://mgeb.space');
-define('MGEB_USER',   'Feljo');
-define('MGEB_PASS',   '22109f3c5de3aa6c');
-define('PAGE_SIZE',   50);          // paginação (evita timeout)
-define('CACHE_TTL',   7200);        // 2h
-define('CACHE_DIR',   sys_get_temp_dir() . '/playmoz_cache');
+define('STREAM_DIR', sys_get_temp_dir() . '/pm_streams');
+define('STREAM_TTL', 1800);
+define('SERVER1_ENDPOINT', 'https://hyper.hyperapps.site/api/download/filmes/');
 
-@ini_set('display_errors', '0');
-@ini_set('log_errors', '1');
-@set_time_limit(120);
+$qualities = ['HD4','HD3','HD2','HD1','FHD','HD5','HD6','HD7','HD8','HD9','HD10','HD11','HD12','HD13','HD14','HD15','HD16','HD17','HD18','HD19','HD20','SD'];
 
-/* ============================================================
- *  HELPERS — API + CACHE
- * ============================================================ */
-function mgeb_api(string $action = '', array $params = []): ?array {
-    if (!function_exists('curl_init')) return null;
-    $q = http_build_query(array_merge([
-        'username' => MGEB_USER,
-        'password' => MGEB_PASS,
-    ], $params));
-    if ($action !== '') $q = 'action=' . rawurlencode($action) . '&' . $q;
-    $url = MGEB_DOMAIN . '/player_api.php?' . $q;
-
-    $ch = curl_init($url);
-    curl_setopt_array($ch, [
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_CONNECTTIMEOUT => 10,
-        CURLOPT_TIMEOUT        => 30,
-        CURLOPT_USERAGENT      => 'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
-        CURLOPT_REFERER        => MGEB_DOMAIN . '/',
-        CURLOPT_SSL_VERIFYPEER => true,
-        CURLOPT_ENCODING       => '',
-    ]);
-    $raw    = curl_exec($ch);
-    $status = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
-    if (!is_string($raw) || $status < 200 || $status >= 300 || $raw === '') return null;
-    $arr = json_decode($raw, true);
-    return is_array($arr) ? $arr : null;
+/* ============ TOKEN STORE (ficheiro, sem cookies) ============ */
+function pm_store_init() {
+    if (!is_dir(STREAM_DIR)) @mkdir(STREAM_DIR, 0700, true);
 }
-
-function cache_get(string $key, int $ttl = CACHE_TTL): ?array {
-    if (!is_dir(CACHE_DIR)) @mkdir(CACHE_DIR, 0700, true);
-    $f = CACHE_DIR . '/' . preg_replace('/[^a-z0-9_]/', '', $key) . '.json';
-    if (is_file($f) && (filemtime($f) + $ttl) > time()) {
-        $d = json_decode((string)@file_get_contents($f), true);
-        if (is_array($d)) return $d;
+function pm_store_put(string $token, array $data): bool {
+    pm_store_init();
+    $data['expires'] = time() + STREAM_TTL;
+    $file = STREAM_DIR . '/' . preg_replace('/[^a-f0-9]/', '', $token) . '.json';
+    $tmp  = $file . '.' . bin2hex(random_bytes(4)) . '.tmp';
+    if (@file_put_contents($tmp, json_encode($data), LOCK_EX) === false) return false;
+    @chmod($tmp, 0600);
+    return @rename($tmp, $file);
+}
+function pm_store_get(string $token): ?array {
+    if (!preg_match('/^[a-f0-9]{32}$/', $token)) return null;
+    $file = STREAM_DIR . '/' . $token . '.json';
+    if (!is_file($file)) return null;
+    $raw = @file_get_contents($file);
+    if ($raw === false) return null;
+    $data = json_decode($raw, true);
+    if (!is_array($data)) return null;
+    if (($data['expires'] ?? 0) < time()) { @unlink($file); return null; }
+    return $data;
+}
+function pm_store_gc() {
+    if (random_int(1, 100) !== 1) return;
+    pm_store_init();
+    foreach ((array)@glob(STREAM_DIR . '/*.json') as $f) {
+        $raw = @file_get_contents($f);
+        $d = $raw ? json_decode($raw, true) : null;
+        if (!is_array($d) || ($d['expires'] ?? 0) < time()) @unlink($f);
     }
-    return null;
-}
-function cache_put(string $key, array $data): void {
-    if (!is_dir(CACHE_DIR)) @mkdir(CACHE_DIR, 0700, true);
-    $f = CACHE_DIR . '/' . preg_replace('/[^a-z0-9_]/', '', $key) . '.json';
-    @file_put_contents($f, json_encode($data), LOCK_EX);
 }
 
-/** Baixa 1 página de filmes (limit/offset) com cache. */
-function filmes_pagina(int $pagina): array {
-    $key = 'filmes_p' . $pagina;
-    $cached = cache_get($key);
-    if ($cached !== null) return $cached;
-
-    $lote = mgeb_api('get_vod_streams', [
-        'limit'  => PAGE_SIZE,
-        'offset' => ($pagina - 1) * PAGE_SIZE,
-    ]);
-    if (!is_array($lote)) $lote = [];
-    if ($lote !== []) cache_put($key, $lote);
-    return $lote;
-}
-
-/** Categorias de filmes. */
-function categorias_filmes(): array {
-    $cached = cache_get('categorias_vod');
-    if ($cached !== null) return $cached;
-    $cats = mgeb_api('get_vod_categories');
-    if (!is_array($cats)) $cats = [];
-    if ($cats !== []) cache_put('categorias_vod', $cats);
-    return $cats;
-}
-
-/** Info detalhada de 1 filme (get_vod_info). */
-function info_filme(string $streamId): ?array {
-    if (!preg_match('/^\d{1,12}$/', $streamId)) return null;
-    $key = 'vodinfo_' . $streamId;
-    $cached = cache_get($key);
-    if ($cached !== null) return $cached;
-    $info = mgeb_api('get_vod_info', ['vod_id' => $streamId]);
-    if (!is_array($info)) return null;
-    cache_put($key, $info);
-    return $info;
-}
-
-/** Token do player (sessão). */
-function player_token(string $streamId, string $direct, string $container): string {
-    if (session_status() !== PHP_SESSION_ACTIVE) @session_start();
-    $t = bin2hex(random_bytes(16));
-    $_SESSION['pl_' . $t] = [
-        'stream_id' => $streamId,
-        'direct'    => $direct,
-        'container' => $container,
-        'expires'   => time() + 1800,
-    ];
-    return $t;
-}
-
-/** Rota interna: ?go=<token> → 302 para mgeb (stream direto). */
-if (isset($_GET['go'])) {
-    if (session_status() !== PHP_SESSION_ACTIVE) @session_start();
-    $t = (string)$_GET['go'];
-    $k = 'pl_' . preg_replace('/[^a-f0-9]/', '', $t);
-    $e = $_SESSION[$k] ?? null;
-    if (!is_array($e) || ($e['expires'] ?? 0) < time() || empty($e['direct'])) {
-        http_response_code(404); exit('Fonte indisponível');
-    }
-    header('Referrer-Policy: strict-origin-when-cross-origin');
-    header('Location: ' . $e['direct'], true, 302);
-    exit;
-}
-
-/** Rota interna: ?embed=<token> → HTML do player (iframe). */
+/* ============ PLAYER EMBUTIDO ============ */
 if (isset($_GET['embed'])) {
-    if (session_status() !== PHP_SESSION_ACTIVE) @session_start();
-    $t = (string)$_GET['embed'];
-    $k = 'pl_' . preg_replace('/[^a-f0-9]/', '', $t);
-    $e = $_SESSION[$k] ?? null;
-    if (!is_array($e) || ($e['expires'] ?? 0) < time()) {
-        http_response_code(404); exit('Fonte indisponível');
+    $token = (string)$_GET['embed'];
+    $entry = pm_store_get($token);
+    if (!is_array($entry)) {
+        http_response_code(404);
+        header('Content-Type: text/html; charset=utf-8');
+        echo '<!doctype html><html><body style="background:#000;color:#fff;font-family:sans-serif;display:grid;place-items:center;height:100vh;margin:0"><p>Fonte indisponível</p></body></html>';
+        exit;
     }
-    $container = strtolower((string)($e['container'] ?? 'm3u8'));
-    $isHls = in_array($container, ['m3u8','ts','txt'], true)
-          || stripos((string)$e['direct'], '.m3u8') !== false
-          || stripos((string)$e['direct'], '.ts')   !== false;
+    $url    = $entry['url'];
+    $label  = $entry['label']  ?? 'HD';
+    $poster = $entry['poster'] ?? 'https://i.imgur.com/XB5B8Md.jpeg';
 
-    $self = strtok($_SERVER['REQUEST_URI'] ?? '/', '?');
-    $go   = $self . '?go=' . rawurlencode($t);
+    if (!preg_match('~^https?://~i', $url)) { http_response_code(502); exit('URL inválido'); }
+
+    // Servidor 1: o JW Player recebe o MP4 real directamente, sem proxy PHP.
+    $urlJs    = json_encode($url, JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_UNESCAPED_SLASHES);
+    $labelJs  = json_encode($label,    JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT);
+    $posterJs = json_encode($poster,   JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_UNESCAPED_SLASHES);
     header('Content-Type: text/html; charset=utf-8');
+    header('Cache-Control: private, no-store');
+    header('X-Content-Type-Options: nosniff');
     header('Referrer-Policy: strict-origin-when-cross-origin');
     ?>
-<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Player</title>
-<script src="https://ssl.p.jwpcdn.com/player/v/8.6.2/jwplayer.js"></script>
-<script>jwplayer.key="64HPbvSQorQcd52B8XFuhMtEoitbvY/EXJmMBfKcXZQU2Rnn";</script>
-<style>html,body{margin:0;padding:0;height:100%;background:#000}#p{width:100%!important;height:100%!important}</style>
-</head><body><div id="p"></div>
+<!DOCTYPE html>
+<html>
+<head>
 <script>
-jwplayer("p").setup({
-  sources:[{ file: <?= json_encode($go, JSON_UNESCAPED_SLASHES) ?>, type: <?= json_encode($isHls ? 'hls' : 'mp4') ?>, default:"true" }],
-  aspectratio:"16:9", autostart:false, primary:"html5", preload:"auto",
-  playbackRateControls:[0.5,0.75,1,1.25,1.5,2], cast:{}
+/* Permite iframes normais; identifica apenas sandbox observável pelo navegador. */
+(function () {
+  if (window.self === window.top) return;
+  var sandboxFound = false;
+  try {
+    // Funciona quando o elemento pai é acessível (por exemplo, mesma origem).
+    var embeddingFrame = window.frameElement;
+    sandboxFound = !!(embeddingFrame && embeddingFrame.hasAttribute('sandbox'));
+  } catch (_) {}
+  // Método RedeFlix: origem opaca quando falta allow-same-origin.
+  if (!sandboxFound) {
+    var originVal = window.origin || (window.location && window.location.origin);
+    if (originVal === 'null' || originVal === null) sandboxFound = true;
+  }
+  // Método RedeFlix: document.domain pode ser proibido pelo sandbox.
+  if (!sandboxFound) {
+    try {
+      document.domain = document.domain;
+    } catch (e) {
+      var message = String(e && e.message || '').toLowerCase();
+      if (message.indexOf('sandbox') !== -1 || message.indexOf('forbidden') !== -1) sandboxFound = true;
+    }
+  }
+  if (!sandboxFound) return;
+  function show() {
+    if (document.getElementById('pm-protection')) return;
+    var d = document.createElement('div');
+    d.id = 'pm-protection';
+    d.style.cssText = 'position:fixed;inset:0;z-index:2147483647;background:#080b12;display:flex;align-items:center;justify-content:center;padding:20px;font-family:Arial,sans-serif;color:#fff;text-align:center';
+    d.innerHTML = '<section style="max-width:420px;background:#141922;border:1px solid #343d4c;border-radius:18px;padding:30px 22px"><h2 style="color:#ff4966">Acesso protegido</h2><p style="line-height:1.65">Este player não permite a utilização de iframe com sandbox. Acede ao site oficial.</p><a href="https://playmoz.xyz" target="_blank" rel="noopener noreferrer" style="display:inline-block;background:#ed2448;color:white;text-decoration:none;padding:13px 22px;border-radius:10px;font-weight:bold">Aceder ao PlayMoz</a><p style="font-size:12px;color:#aab1bd">Alguns sandboxes podem impedir a abertura de novas janelas.</p></section>';
+    document.body.appendChild(d);
+    try { if (window.player && window.player.pause) window.player.pause(true); } catch (_) {}
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', show, {once:true});
+  else show();
+})();
+</script>
+<meta charset="utf-8">
+<meta name="robots" content="noindex, nofollow">
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>PlayMoz Player</title>
+<script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.3.1/jquery.min.js"></script>
+<script type="text/javascript" src="https://ssl.p.jwpcdn.com/player/v/8.6.2/jwplayer.js"></script>
+<script type="text/javascript">jwplayer.key = "64HPbvSQorQcd52B8XFuhMtEoitbvY/EXJmMBfKcXZQU2Rnn";</script>
+<style type="text/css" media="screen">
+ html, body { padding:0; margin:0; height:100%; background:#000 }
+ #ani-player { width:100% !important; height:100% !important; overflow:hidden; background-color:#000 }
+ .download { background:#ff0000; padding:10px; letter-spacing:1px; box-shadow:0 1px 15px #ff0000; color:#fff; font-family:"Open-Sans", sans-serif; margin:8px; border-radius:19px; font-weight:bold; font-size:11px }
+ #type { opacity:0; position:fixed; top:5px; left:10px; z-index:999999999; transition: opacity 1s ease-in-out }
+ body:hover > #type { opacity:1; transition: opacity 50ms ease-in-out }
+ #down { position:absolute; z-index:2 }
+ #down:hover > .down-list { display:block }
+ .down-list { display:none; list-style:none; left:3px; z-index:9999999999999999; box-shadow:0 1px 15px #ff0000; background:#ff0000; margin:0; border-radius:40px; width:144px; padding:5px 0 0; position:absolute; }
+ .down-list li { float:left; width:134px; padding:5px; text-align:center; margin-bottom:5px }
+ .down-list li:hover { background:#0003 }
+ .down-list li:hover > a { color:#fff }
+ .down-list li a { color:#fff; text-decoration:none; font-family:"Open-Sans", sans-serif; font-size:18px; width:100% }
+ .jw-icon.jw-icon-inline.jw-button-color.jw-reset.jw-icon-rewind { display:none; }
+
+ /* 👇 Overlay elegante para erro de reprodução */
+ #pm-err{
+   position:fixed;inset:0;background:#000;display:none;
+   align-items:center;justify-content:center;z-index:20;
+   font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+ }
+ #pm-err.on{display:flex}
+ #pm-err .box{
+   background:linear-gradient(160deg,#1a1d26,#0f1117);
+   border:1px solid #2a2e39;border-radius:22px;
+   padding:30px 26px;max-width:360px;width:calc(100% - 40px);
+   text-align:center;box-shadow:0 30px 90px rgba(0,0,0,.75);
+   animation:pmIn2 .4s cubic-bezier(.2,.9,.3,1.15);
+ }
+ @keyframes pmIn2{from{opacity:0;transform:translateY(12px) scale(.97)}to{opacity:1;transform:none}}
+ #pm-err .icon{
+   width:60px;height:60px;border-radius:50%;display:grid;place-items:center;
+   background:rgba(255,0,0,.12);border:1px solid rgba(255,0,0,.35);
+   color:#ff4d4d;margin:0 auto 16px;
+ }
+ #pm-err .icon svg{width:28px;height:28px}
+ #pm-err h2{margin:0 0 8px;font-size:17px;font-weight:700;color:#fff}
+ #pm-err p{margin:0 0 22px;color:#9aa1b0;font-size:13px;line-height:1.55}
+ #pm-err .btns{display:flex;gap:10px;flex-direction:column}
+ #pm-err button{
+   width:100%;padding:13px 18px;border-radius:14px;border:1px solid #333846;
+   background:linear-gradient(145deg,#202430,#161922);color:#fff;
+   font-family:inherit;font-size:14px;font-weight:700;cursor:pointer;
+   transition:transform .15s,border-color .2s,background .2s;
+ }
+ #pm-err button:hover{border-color:#ff3333;background:linear-gradient(145deg,#2a1e22,#1c1518)}
+ #pm-err button:active{transform:scale(.98)}
+ #pm-err button.primary{
+   border-color:rgba(255,0,0,.5);
+   background:linear-gradient(145deg,#2c1a1c,#1a1012);
+ }
+
+/* PLAYMOZ V4 — selector cinematografico compacto inspirado no modelo de referencia */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+:root{--pm-backdrop:none}
+html,body{font-family:Inter,system-ui,-apple-system,'Segoe UI',sans-serif!important}
+#pm-screen{padding:max(12px,env(safe-area-inset-top)) 12px max(12px,env(safe-area-inset-bottom))!important;background:linear-gradient(180deg,rgba(5,7,12,.62) 0%,rgba(5,7,12,.78) 52%,rgba(5,7,12,.88) 100%),var(--pm-backdrop) center/cover no-repeat,#0b0d14!important;backdrop-filter:none!important;align-items:center;justify-content:center}
+.pm-modal{max-width:390px!important;width:100%!important;border-radius:17px!important;background:rgba(13,16,23,.78)!important;backdrop-filter:blur(20px) saturate(115%)!important;-webkit-backdrop-filter:blur(20px) saturate(115%)!important;border:1px solid rgba(255,255,255,.13)!important;box-shadow:0 20px 60px rgba(0,0,0,.55)!important;max-height:calc(100dvh - 24px)!important}
+.pm-head{padding:15px 17px 12px!important;gap:10px!important}
+.pm-logo{width:32px!important;height:32px!important;flex:0 0 32px!important;border-radius:9px!important;background:rgba(255,255,255,.06)!important;border:1px solid rgba(255,255,255,.1)!important;color:#fff!important}
+.pm-logo svg{width:17px!important;height:17px!important}
+.pm-head-text small{font-size:8px!important;letter-spacing:.1em!important;color:#aaaeba!important;font-weight:600!important}
+.pm-head-text h1{font-size:14px!important;font-weight:700!important;letter-spacing:-.02em!important}
+.pm-body{padding:17px 16px 18px!important;min-height:0!important;max-height:calc(100dvh - 148px)!important}
+.pm-body h2{font-size:13px!important;margin:0 0 7px!important}
+.pm-body p{font-size:11px!important;line-height:1.5!important;color:#c4c8d0!important;max-width:300px!important}
+.pm-servers{gap:8px!important;margin-top:14px!important}
+.pm-server-btn{min-height:54px!important;padding:9px 11px!important;border-radius:10px!important;gap:10px!important;background:rgba(255,255,255,.07)!important;border:1px solid rgba(255,255,255,.12)!important}
+.pm-server-btn:hover,.pm-server-btn:focus-visible{background:rgba(255,255,255,.14)!important;border-color:rgba(255,255,255,.35)!important;box-shadow:none!important}
+.pm-server-btn-icon{width:33px!important;height:33px!important;flex:0 0 33px!important;border-radius:9px!important;background:rgba(255,255,255,.08)!important;border:0!important;color:#f8f9fb!important}
+.pm-server-btn-icon svg{width:16px!important;height:16px!important}
+.pm-server-btn-info strong{font-size:12px!important;line-height:1.25!important;letter-spacing:-.01em!important}
+.pm-server-btn-info small{font-size:10px!important;color:#bfc2cd!important;margin-top:3px!important}
+.pm-foot{font-size:9px!important;color:#9fa3af!important;padding:10px 15px 12px!important}
+.pm-loading-art{height:72px!important;margin-bottom:7px!important}.pm-loading-art span{font-size:10px!important}.pm-loading-ring{width:60px!important;height:60px!important}
+.pm-spin{width:38px!important;height:38px!important;margin-bottom:12px!important}
+@media(max-width:360px){#pm-screen{padding:8px!important}.pm-modal{border-radius:13px!important}.pm-head{padding:11px 12px 10px!important}.pm-body{padding:12px!important}.pm-server-btn{min-height:47px!important;padding:7px 8px!important}.pm-server-btn-icon{width:29px!important;height:29px!important;flex-basis:29px!important}.pm-server-btn-info strong{font-size:11px!important}.pm-server-btn-info small{font-size:9px!important}.pm-foot{font-size:8px!important;padding:8px 11px!important}}
+@media(max-height:440px){.pm-head{padding:9px 13px!important}.pm-body{padding:10px 13px!important}.pm-servers{margin-top:8px!important}.pm-server-btn{min-height:42px!important}.pm-foot{padding:7px 13px!important}}
+
+
+/* V5 — selector minimalista alinhado com pagina de reproducao de referencia */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+html,body{font-family:Inter,Arial,system-ui,sans-serif!important;background:#08090d!important}
+#pm-screen{background:linear-gradient(180deg,rgba(2,4,9,.49),rgba(2,4,9,.75) 65%,rgba(2,4,9,.86)),var(--pm-backdrop) center center/cover no-repeat,#090b10!important;padding:clamp(10px,3vw,24px)!important;display:flex;align-items:center;justify-content:center}
+.pm-modal{width:min(380px,100%)!important;max-height:calc(100dvh - 20px)!important;overflow:auto!important;border-radius:14px!important;background:rgba(14,17,23,.83)!important;-webkit-backdrop-filter:blur(17px)!important;backdrop-filter:blur(17px)!important;border:1px solid rgba(255,255,255,.12)!important;box-shadow:0 16px 55px rgba(0,0,0,.58)!important}
+.pm-head{display:block!important;padding:19px 18px 6px!important;text-align:center!important;border:0!important}
+.pm-logo,.pm-head-text small{display:none!important}
+.pm-head-text h1{font-size:18px!important;line-height:1.35!important;font-weight:700!important;letter-spacing:-.03em!important;margin:0!important}
+.pm-body{padding:10px 18px 18px!important;min-height:0!important;max-height:none!important;display:flex!important;flex-direction:column!important;align-items:stretch!important;text-align:center!important}
+.pm-body h2{font-size:13px!important;font-weight:600!important;line-height:1.5!important;margin:0 0 12px!important;color:#dfe3e9!important}
+.pm-body p{font-size:11px!important;margin:0 auto 9px!important;line-height:1.5!important;color:#a8afb9!important}
+.pm-servers{width:100%!important;margin-top:7px!important;gap:8px!important}
+.pm-server-btn{min-height:54px!important;padding:10px 12px!important;gap:10px!important;border-radius:9px!important;border:1px solid rgba(255,255,255,.14)!important;background:rgba(255,255,255,.075)!important;box-shadow:none!important;text-align:left!important}
+.pm-server-btn:hover,.pm-server-btn:focus-visible{background:rgba(255,255,255,.16)!important;border-color:rgba(255,255,255,.35)!important}
+.pm-server-btn-icon{width:31px!important;height:31px!important;flex:0 0 31px!important;border-radius:8px!important;background:rgba(255,255,255,.10)!important;border:0!important;color:#fff!important}
+.pm-server-btn-icon svg{width:16px!important;height:16px!important}
+.pm-server-btn-info strong{font-size:12px!important;line-height:1.3!important;font-weight:600!important}
+.pm-server-btn-info small{font-size:10px!important;line-height:1.3!important;color:#aab1be!important;margin-top:2px!important}
+.pm-server-btn-arrow svg{width:15px!important;height:15px!important}
+.pm-foot{border:0!important;background:none!important;color:#949ba7!important;font-size:9px!important;line-height:1.5!important;padding:0 16px 16px!important}
+.pm-loading-art{height:65px!important;margin-bottom:9px!important}.pm-loading-ring{width:57px!important;height:57px!important}.pm-loading-art span{font-size:9px!important}
+@media(max-width:350px){#pm-screen{padding:8px!important}.pm-modal{border-radius:12px!important}.pm-head{padding:14px 11px 4px!important}.pm-head-text h1{font-size:16px!important}.pm-body{padding:8px 11px 13px!important}.pm-server-btn{min-height:46px!important;padding:8px!important}.pm-server-btn-icon{width:28px!important;height:28px!important;flex-basis:28px!important}.pm-server-btn-info strong{font-size:11px!important}.pm-server-btn-info small{font-size:9px!important}}
+@media(max-height:400px){.pm-head{padding-top:9px!important}.pm-body{padding-top:5px!important;padding-bottom:8px!important}.pm-server-btn{min-height:41px!important}.pm-foot{padding-bottom:8px!important}}
+
+</style>
+</head>
+<body>
+<script>
+function goBack(){
+  try{
+    if (window.parent && window.parent !== window) {
+      window.parent.postMessage({type:'playmoz-close'}, '*');
+      return;
+    }
+    if (history.length > 1) { history.back(); return; }
+    window.close();
+    setTimeout(function(){ window.location.href = "/"; }, 50);
+  }catch(err){ window.location.href = "/"; }
+}
+</script>
+
+<!-- 👇 Botão Voltar original -->
+<div style=" background:#ff0000; padding:10px 20px; letter-spacing:1px; box-shadow:0 1px 15px #ff0000; color:#fff; font-family:'Open-Sans',sans-serif; margin:8px; border-radius:19px; font-weight:bold; font-size:11px; position:absolute; left:16px; z-index:9; cursor:pointer;" onclick="goBack()">Voltar</div>
+
+<!-- 👇 Botão Tentar novamente original -->
+<div id="btn_try" style=" background:#333; padding:10px 20px; letter-spacing:1px; box-shadow:0 1px 15px #333; color:#fff; font-family:'Open-Sans',sans-serif; margin:8px; border-radius:19px; font-weight:bold; font-size:11px; position:absolute; left:100px; z-index:9; display:none; cursor:pointer;" onclick="window.location.reload()">Tentar novamente</div>
+
+<!-- Servidor 1: Espelhar/Baixar abre directamente o MP4 assinado. -->
+<div id="down" style="right:16px;">
+  <div class="download">Espelhar/Baixar</div>
+  <ul id="down-list" class="down-list">
+    <li><a href="<?= htmlspecialchars($url, ENT_QUOTES, 'UTF-8') ?>" target="_blank" rel="noopener noreferrer">Clique aqui</a></li>
+  </ul>
+</div>
+
+<div id="ani-player"></div>
+
+<!-- 👇 Overlay de erro (substitui o 224003 do JW) -->
+<div id="pm-err">
+  <div class="box">
+    <div class="icon">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg>
+    </div>
+    <h2>Não foi possível reproduzir</h2>
+    <p>A fonte selecionada não está disponível neste momento. Podes tentar novamente ou escolher outro servidor.</p>
+    <div class="btns">
+      <button class="primary" type="button" onclick="window.location.reload()">Tentar novamente</button>
+      <button type="button" onclick="goBack()">Voltar</button>
+    </div>
+  </div>
+</div>
+
+<script type="text/javascript">
+function pmShowErr(){
+  var el = document.getElementById('pm-err');
+  if (el) el.classList.add('on');
+  try { if (window.player && player.pause) player.pause(true); } catch(e){}
+}
+function pmHideErr(){
+  var el = document.getElementById('pm-err');
+  if (el) el.classList.remove('on');
+}
+
+var player = jwplayer("ani-player");
+player.setup({
+  sources: [{ file: <?= $urlJs ?>, label: <?= $labelJs ?>, type: (/\.m3u8(?:[?#]|$)/i.test(<?= $urlJs ?>) ? "hls" : (/\.mpd(?:[?#]|$)/i.test(<?= $urlJs ?>) ? "dash" : "mp4")), default: "false" }],
+  aspectratio: "16:9",
+  startparam: "start",
+  primary: "html5",
+  autostart: false,
+  mute: false,
+  preload: "auto",
+  image: <?= $posterJs ?>,
+  playbackRateControls: [0.5, 0.75, 1, 1.25, 1.5, 2],
+  debug: false,
+  cast: {},
 });
-</script></body></html>
+
+// 👇 Erro do JW → overlay elegante (nunca mostra 224003)
+player.on('error', pmShowErr);
+player.on('mediaError', pmShowErr);
+player.on('play', pmHideErr);
+player.on('buffer', pmHideErr);
+
+player.addButton('<svg xmlns="http://www.w3.org/2000/svg" class="jw-svg-icon jw-svg-icon-rewind2" viewBox="0 0 240 240" focusable="false"><path d="m 25.993957,57.778 v 125.3 c 0.03604,2.63589 2.164107,4.76396 4.8,4.8 h 62.7 v -19.3 h -48.2 v -96.4 H 160.99396 v 19.3 c 0,5.3 3.6,7.2 8,4.3 l 41.8,-27.9 c 2.93574,-1.480087 4.13843,-5.04363 2.7,-8 -0.57502,-1.174985 -1.52502,-2.124979 -2.7,-2.7 l -41.8,-27.9 c -4.4,-2.9 -8,-1 -8,4.3 v 19.3 H 30.893957 c -2.689569,0.03972 -4.860275,2.210431 -4.9,4.9 z m 163.422413,73.04577 c -3.72072,-6.30626 -10.38421,-10.29683 -17.7,-10.6 -7.31579,0.30317 -13.97928,4.29374 -17.7,10.6 -8.60009,14.23525 -8.60009,32.06475 0,46.3 3.72072,6.30626 10.38421,10.29683 17.7,10.6 7.31579,-0.30317 13.97928,-4.29374 17.7,-10.6 8.60009,-14.23525 8.60009,-32.06475 0,-46.3 z m -17.7,47.2 c -7.8,0 -14.4,-11 -14.4,-24.1 0,-13.1 6.6,-24.1 14.4,-24.1 7.8,0 14.4,11 14.4,24.1 0,13.1 -6.5,24.1 -14.4,24.1 z m -47.77056,9.72863 v -51 l -4.8,4.8 -6.8,-6.8 13,-12.99999 c 3.02543,-3.03598 8.21053,-0.88605 8.2,3.4 v 62.69999 z"></path></svg>', "Avançar 10s", function () { player.seek(player.getPosition() + 10); }, "Avançar 10s");
+
+player.addButton('<svg xmlns="http://www.w3.org/2000/svg" class="jw-svg-icon jw-svg-icon-rewind" viewBox="0 0 240 240" focusable="false"><path d="M113.2,131.078a21.589,21.589,0,0,0-17.7-10.6,21.589,21.589,0,0,0-17.7,10.6,44.769,44.769,0,0,0,0,46.3,21.589,21.589,0,0,0,17.7,10.6,21.589,21.589,0,0,0,17.7-10.6,44.769,44.769,0,0,0,0-46.3Zm-17.7,47.2c-7.8,0-14.4-11-14.4-24.1s6.6-24.1,14.4-24.1,14.4,11,14.4,24.1S103.4,178.278,95.5,178.278Zm-43.4,9.7v-51l-4.8,4.8-6.8-6.8,13-13a4.8,4.8,0,0,1,8.2,3.4v62.7l-9.6-.1Zm162-130.2v125.3a4.867,4.867,0,0,1-4.8,4.8H146.6v-19.3h48.2v-96.4H79.1v19.3c0,5.3-3.6,7.2-8,4.3l-41.8-27.9a6.013,6.013,0,0,1-2.7-8,5.887,5.887,0,0,1,2.7-2.7l41.8-27.9c4.4-2.9,8-1,8,4.3v19.3H209.2A4.974,4.974,0,0,1,214.1,57.778Z"></path></svg>', "Voltar 10s", function () { player.seek(player.getPosition() - 10); }, "Voltar 10s");
+</script>
+</body>
+</html>
     <?php
     exit;
 }
 
-/* ============================================================
- *  ROTEAMENTO
- * ============================================================ */
-$pagina   = max(1, (int)($_GET['p'] ?? 1));
-$categoria = (string)($_GET['cat'] ?? '');
-$busca    = trim((string)($_GET['q'] ?? ''));
-$acao     = (string)($_GET['acao'] ?? 'home');
+/* ============ PROXY STREAM (resolve o 224003) ============ */
+if (isset($_GET['stream'])) {
+    $token = (string)$_GET['stream'];
+    $entry = pm_store_get($token);
+    if (!is_array($entry)) {
+        http_response_code(404); exit('Fonte indisponível');
+    }
+    $url = $entry['url'];
+    if (!function_exists('curl_init') || !preg_match('~^https?://~i', $url)) {
+        http_response_code(502); exit;
+    }
+    $range = $_SERVER['HTTP_RANGE'] ?? '';
+    if ($range !== '' && !preg_match('/^bytes=\d*-\d*$/', $range)) {
+        http_response_code(416); exit;
+    }
 
-/* JSON: 1 filme (para o modal) */
-if ($acao === 'filme') {
-    header('Content-Type: application/json; charset=utf-8');
-    $id = (string)($_GET['id'] ?? '');
-    if (!preg_match('/^\d{1,12}$/', $id)) { echo json_encode(['ok'=>false,'error'=>'id_invalido']); exit; }
-    $info = info_filme($id);
-    if (!$info || empty($info['movie_data'])) { echo json_encode(['ok'=>false,'error'=>'nao_encontrado']); exit; }
-    $md = $info['movie_data'];
-    $direct    = (string)($md['direct_source'] ?? '');
-    $container = (string)($md['container_extension'] ?? 'm3u8');
-    if ($direct === '') { echo json_encode(['ok'=>false,'error'=>'sem_stream']); exit; }
-    $tok = player_token($id, $direct, $container);
-    echo json_encode([
-        'ok'        => true,
-        'stream_id' => $id,
-        'nome'      => (string)($info['info']['name']        ?? 'Sem título'),
-        'sinopse'   => (string)($info['info']['plot']        ?? ($info['info']['description'] ?? '')),
-        'poster'    => (string)($info['info']['movie_image'] ?? ($info['info']['cover_big'] ?? '')),
-        'ano'       => (string)($info['info']['releasedate'] ?? ($info['info']['year'] ?? '')),
-        'genero'    => (string)($info['info']['genre']       ?? ''),
-        'rating'    => (string)($info['info']['rating']      ?? ''),
-        'container' => $container,
-        'embed'     => 'index.php?embed=' . $tok,
-    ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    // Detecta Content-Type do ficheiro remoto
+    $headCh = curl_init($url);
+    curl_setopt_array($headCh, [
+        CURLOPT_NOBODY => true,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_FOLLOWLOCATION => true,
+        CURLOPT_MAXREDIRS => 3,
+        CURLOPT_CONNECTTIMEOUT => 5,
+        CURLOPT_TIMEOUT => 8,
+        CURLOPT_USERAGENT => 'Mozilla/5.0',
+        CURLOPT_SSL_VERIFYPEER => true,
+    ]);
+    curl_exec($headCh);
+    $remoteCtype = (string)curl_getinfo($headCh, CURLINFO_CONTENT_TYPE);
+    $remoteLen   = (int)curl_getinfo($headCh, CURLINFO_CONTENT_LENGTH_DOWNLOAD);
+    curl_close($headCh);
+
+    if (stripos($remoteCtype, 'video/') === 0) {
+        $ctype = $remoteCtype;
+    } elseif (stripos($remoteCtype, 'mpegurl') !== false || stripos($remoteCtype, 'm3u8') !== false) {
+        $ctype = 'application/vnd.apple.mpegurl';
+    } else {
+        $ctype = 'video/mp4';
+    }
+
+    if (isset($_GET['download'])) header('Content-Disposition: attachment; filename="PlayMoz-filme.mp4"');
+    if ($range === '') {
+        header('Content-Type: ' . $ctype);
+        header('Accept-Ranges: bytes');
+        if ($remoteLen > 0) header('Content-Length: ' . $remoteLen);
+    }
+    header('Cache-Control: private, no-store');
+    header('X-Content-Type-Options: nosniff');
+    header('Access-Control-Allow-Origin: *');
+
+    $ch = curl_init($url);
+    curl_setopt_array($ch, [
+        CURLOPT_FOLLOWLOCATION => true,
+        CURLOPT_MAXREDIRS => 3,
+        CURLOPT_CONNECTTIMEOUT => 8,
+        CURLOPT_TIMEOUT => 0,
+        CURLOPT_RETURNTRANSFER => false,
+        CURLOPT_USERAGENT => 'Mozilla/5.0',
+        CURLOPT_SSL_VERIFYPEER => true,
+        CURLOPT_HTTPHEADER => array_merge(
+            ['Accept: video/mp4,video/*;q=0.9,*/*;q=0.8', 'Accept-Encoding: identity'],
+            $range ? ['Range: '.$range] : []
+        ),
+        CURLOPT_HEADERFUNCTION => function($ch, $line) {
+            $trim = trim($line);
+            if (preg_match('~^HTTP/\S+\s+(\d+)~i', $trim, $m)) {
+                $status = (int)$m[1];
+                if (in_array($status, [200,206,416], true)) http_response_code($status);
+                else http_response_code(502);
+            } elseif (preg_match('/^(content-type|content-length|content-range|accept-ranges):/i', $trim)) {
+                if (stripos($trim, 'content-type:') === 0) return strlen($line);
+                header($trim, true);
+            }
+            return strlen($line);
+        },
+        CURLOPT_WRITEFUNCTION => function($ch, $chunk) {
+            $status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            if (!in_array($status,[200,206],true)) return 0;
+            echo $chunk;
+            if (function_exists('flush')) flush();
+            return strlen($chunk);
+        }
+    ]);
+    curl_exec($ch);
+    if (curl_errno($ch)) error_log('PlayMoz stream: '.curl_error($ch));
+    curl_close($ch);
     exit;
 }
 
-/* JSON: lista de filmes (busca/categoria/paginação) */
-if ($acao === 'lista') {
-    header('Content-Type: application/json; charset=utf-8');
-    $lote = filmes_pagina($pagina);
-
-    // Filtros
-    if ($categoria !== '') {
-        $lote = array_filter($lote, fn($f) => (string)($f['category_id'] ?? '') === $categoria);
-        $lote = array_values($lote);
+function requestUrl($url, $headers = []) {
+    if (!function_exists('curl_init')) return false;
+    $ch = curl_init($url);
+    curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER=>true, CURLOPT_FOLLOWLOCATION=>true, CURLOPT_MAXREDIRS=>3, CURLOPT_CONNECTTIMEOUT=>5, CURLOPT_TIMEOUT=>12, CURLOPT_ENCODING=>'', CURLOPT_HTTPHEADER=>$headers, CURLOPT_USERAGENT=>'Mozilla/5.0 PlayMoz/1.0', CURLOPT_SSL_VERIFYPEER=>true]);
+    $body = curl_exec($ch); $status = curl_getinfo($ch, CURLINFO_HTTP_CODE); $effective = curl_getinfo($ch, CURLINFO_EFFECTIVE_URL); curl_close($ch);
+    if ($body === false || $status < 200 || $status >= 300 || (BLOCKED_HOST !== '' && strtolower((string)parse_url((string)$effective, PHP_URL_HOST)) === strtolower(BLOCKED_HOST))) return false;
+    return $body;
+}
+function tmdbToImdb($id, $type) {
+    if (!ctype_digit((string)$id) || !in_array($type,['movie','tv'],true)) return null;
+    // Tenta external_ids e, se necessário, os detalhes do título.
+    // Falhas de rede não devem ser confundidas com um IMDb inexistente.
+    foreach (['/external_ids', ''] as $suffix) {
+        $url='https://api.themoviedb.org/3/'.$type.'/'.rawurlencode($id).$suffix.'?api_key='.rawurlencode(TMDB_API_KEY);
+        $json=requestUrl($url, ['Accept: application/json']);
+        if ($json === false) continue;
+        $data=json_decode($json,true);
+        $imdb=is_array($data) ? ($data['imdb_id'] ?? null) : null;
+        if (is_string($imdb) && preg_match('/^tt\d{5,12}$/',$imdb)) return $imdb;
     }
-    if ($busca !== '') {
-        $q = mb_strtolower($busca, 'UTF-8');
-        $lote = array_filter($lote, function ($f) use ($q) {
-            $n = mb_strtolower((string)($f['name'] ?? ''), 'UTF-8');
-            return mb_strpos($n, $q) !== false;
-        });
-        $lote = array_values($lote);
-    }
+    return null;
+}
 
-    $out = [];
-    foreach ($lote as $f) {
-        $out[] = [
-            'stream_id' => (string)($f['stream_id'] ?? ''),
-            'nome'      => (string)($f['name']      ?? ''),
-            'poster'    => (string)($f['stream_icon'] ?? ''),
-            'rating'    => (string)($f['rating']    ?? ''),
-            'ano'       => (string)($f['year']      ?? ''),
-            'cat'       => (string)($f['category_id'] ?? ''),
+/* Servidor 1: resolve slugs de filmes do catálogo; só aceita MP4 correspondente ao IMDb. */
+function pm_slug($name) {
+    $name = trim((string)$name);
+    if (function_exists('transliterator_transliterate')) $name = transliterator_transliterate('Any-Latin; Latin-ASCII', $name);
+    else $name = iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $name) ?: $name;
+    $name = strtolower($name);
+    return trim(preg_replace('/[^a-z0-9]+/', '-', $name), '-');
+}
+function pm_tmdb_from_imdb($imdb) {
+    if (!preg_match('/^tt\d{5,12}$/', (string)$imdb)) return null;
+    $url='https://api.themoviedb.org/3/find/'.rawurlencode($imdb).'?api_key='.rawurlencode(TMDB_API_KEY).'&external_source=imdb_id';
+    $json=requestUrl($url,['Accept: application/json']);
+    $data=$json ? json_decode($json,true) : null;
+    return is_array($data) && !empty($data['movie_results'][0]['id']) ? (string)$data['movie_results'][0]['id'] : null;
+}
+function pm_movie_slugs($tmdbId, $manual='') {
+    $slugs=[];
+    if (preg_match('/^[a-z0-9]+(?:-[a-z0-9]+)*$/', $manual)) $slugs[]=$manual;
+    if ($tmdbId && ctype_digit((string)$tmdbId)) {
+        foreach (['pt-BR','en-US'] as $lang) {
+            $json=requestUrl('https://api.themoviedb.org/3/movie/'.rawurlencode((string)$tmdbId).'?api_key='.rawurlencode(TMDB_API_KEY).'&language='.$lang, ['Accept: application/json']);
+            $info=$json ? json_decode($json,true) : null;
+            if (!is_array($info)) continue;
+            foreach (['title','original_title'] as $field) {
+                if (!empty($info[$field])) $slugs[]=pm_slug($info[$field]);
+            }
+        }
+    }
+    return array_slice(array_values(array_unique(array_filter($slugs))),0,5);
+}
+function pm_server1_mp4($slug, $imdb) {
+    if (!preg_match('/^[a-z0-9]+(?:-[a-z0-9]+)*$/', (string)$slug)
+        || !preg_match('/^tt\d{5,12}$/', (string)$imdb)
+        || !function_exists('curl_init')) return null;
+
+    $endpoint = SERVER1_ENDPOINT . rawurlencode($slug);
+    // Este endpoint responde com Location: <MP4 assinado>. NÃO seguir o
+    // redireccionamento: muitos fornecedores não respondem a HEAD do MP4.
+    foreach (['HEAD', 'GET'] as $method) {
+        $location = '';
+        $ch = curl_init($endpoint);
+        $opts = [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_FOLLOWLOCATION => false,
+            CURLOPT_CONNECTTIMEOUT => 6,
+            CURLOPT_TIMEOUT => 15,
+            CURLOPT_USERAGENT => 'Mozilla/5.0 (compatible; PlayMoz/1.0)',
+            CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_HEADERFUNCTION => function ($ch, $header) use (&$location) {
+                if (stripos($header, 'Location:') === 0) $location = trim(substr($header, 9));
+                return strlen($header);
+            },
         ];
+        if ($method === 'HEAD') $opts[CURLOPT_NOBODY] = true;
+        else {
+            // GET de recurso que redirecciona; não permitir descarregar vídeo.
+            $opts[CURLOPT_RANGE] = '0-0';
+            $opts[CURLOPT_WRITEFUNCTION] = function ($ch, $chunk) { return 0; };
+        }
+        curl_setopt_array($ch, $opts);
+        curl_exec($ch);
+        $status = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+        if ($status >= 300 && $status < 400 && $location !== '') {
+            // Aceita só HTTPS de um armazenamento conhecido e filme correcto.
+            $parts = parse_url(html_entity_decode($location, ENT_QUOTES | ENT_HTML5, 'UTF-8'));
+            if (!$parts || strtolower($parts['scheme'] ?? '') !== 'https') return null;
+            $host = strtolower($parts['host'] ?? '');
+            if (!preg_match('/^s3\.[a-z0-9-]+\.wasabisys\.com$/', $host)) return null;
+            if (!preg_match('~/(tt\d{5,12})\.mp4$~i', $parts['path'] ?? '', $m)) return null;
+            if (strtolower($m[1]) !== strtolower($imdb)) return null;
+            return $location;
+        }
+        if ($status === 404) return null;
     }
-    echo json_encode([
-        'ok'     => true,
-        'filmes' => $out,
-        'pagina' => $pagina,
-        'tem_mais' => count($lote) >= PAGE_SIZE,
-    ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-    exit;
+    return null;
 }
 
-/* JSON: categorias */
-if ($acao === 'categorias') {
+function extractVideoLinks($html) {
+    $found=[];
+    $dom=new DOMDocument();
+    $old=libxml_use_internal_errors(true);
+    $dom->loadHTML('<?xml encoding="utf-8" ?>'.$html);
+    libxml_clear_errors(); libxml_use_internal_errors($old);
+    foreach ($dom->getElementsByTagName('a') as $a) {
+        $href=html_entity_decode($a->getAttribute('href'), ENT_QUOTES|ENT_HTML5, 'UTF-8');
+        if ($href && ($a->hasAttribute('download') || strtolower($a->getAttribute('target'))==='_blank' || ($a->parentNode instanceof DOMElement && stripos($a->parentNode->getAttribute('class'),'down-list')!==false))) $found[]=$href;
+    }
+    preg_match_all('~(?:file\\s*:\\s*["\\\']|<source[^>]+src=["\\\'])(https?[^"\\\']+\\.(?:mp4|m3u8)(?:\\?[^"\\\']*)?)["\\\']~i', $html, $matches);
+    foreach ($matches[1] as $url) $found[]=$url;
+    preg_match_all('~[\"\'](https?://[^\"\'<>\s]+\.mp4(?:\?[^\"\'<>\s]*)?)[\"\']~i', $html, $extra);
+    foreach ($extra[1] as $url) $found[]=$url;
+    $out=[];
+    foreach (array_unique($found) as $url) {
+        $url=html_entity_decode(str_replace('\\/','/',$url),ENT_QUOTES|ENT_HTML5,'UTF-8');
+        if (strpos($url,'//')===0) $url='https:'.$url;
+        if (strpos($url,'/')===0) $url=PLAYER_ORIGIN.$url;
+        $parts=parse_url($url);
+        if (!$parts || !in_array(strtolower($parts['scheme']??''),['https','http'],true) || empty($parts['host'])) continue;
+        if (strtolower($parts['host'])===BLOCKED_HOST) continue;
+        if (!preg_match('~\\.mp4(?:\\?|$)~i',$parts['path'].(isset($parts['query'])?'?'.$parts['query']:''))) continue;
+        $out[]=$url;
+    }
+    return array_values(array_unique($out));
+}
+function testVideoUrl($url) {
+    if (!function_exists('curl_init')) return ['ok'=>false];
+    $ch=curl_init($url);
+    curl_setopt_array($ch,[CURLOPT_NOBODY=>true,CURLOPT_RETURNTRANSFER=>true,CURLOPT_FOLLOWLOCATION=>true,CURLOPT_MAXREDIRS=>3,CURLOPT_CONNECTTIMEOUT=>4,CURLOPT_TIMEOUT=>9,CURLOPT_USERAGENT=>'Mozilla/5.0',CURLOPT_SSL_VERIFYPEER=>true]);
+    curl_exec($ch); $status=curl_getinfo($ch,CURLINFO_HTTP_CODE);$ctype=(string)curl_getinfo($ch,CURLINFO_CONTENT_TYPE);$effective=(string)curl_getinfo($ch,CURLINFO_EFFECTIVE_URL);curl_close($ch);
+    if ($effective && strtolower(parse_url($effective,PHP_URL_HOST)??'')===BLOCKED_HOST) return ['ok'=>false];
+    if (in_array($status,[403,405,501,0],true)) {
+        $ch=curl_init($url);
+        curl_setopt_array($ch,[CURLOPT_RETURNTRANSFER=>true,CURLOPT_RANGE=>'0-0',CURLOPT_FOLLOWLOCATION=>true,CURLOPT_MAXREDIRS=>3,CURLOPT_CONNECTTIMEOUT=>4,CURLOPT_TIMEOUT=>9,CURLOPT_USERAGENT=>'Mozilla/5.0',CURLOPT_SSL_VERIFYPEER=>true,CURLOPT_WRITEFUNCTION=>function($ch,$data){return strlen($data)>65536?0:strlen($data);}]);
+        curl_exec($ch);$status=curl_getinfo($ch,CURLINFO_HTTP_CODE);$ctype=(string)curl_getinfo($ch,CURLINFO_CONTENT_TYPE);$effective=(string)curl_getinfo($ch,CURLINFO_EFFECTIVE_URL);curl_close($ch);
+    }
+    $ok=in_array($status,[200,206],true) && !preg_match('~text/html|application/xml~i',$ctype) && strtolower(parse_url($effective?:$url,PHP_URL_HOST)??'')!==BLOCKED_HOST;
+    return ['ok'=>$ok];
+}
+
+$id=$_GET['id']??null;
+if (!$id && preg_match('~/([0-9]+)(?:/)?$~',parse_url($_SERVER['REQUEST_URI']??'',PHP_URL_PATH)??'',$m)) $id=$m[1];
+$type=$_GET['type']??'movie';
+if (!in_array($type,['movie','tv'],true)) $type='movie';
+$imdb = null; // Servidor 1: obter identificador interno apenas quando necessário.
+$season=filter_var($_GET['season']??null,FILTER_VALIDATE_INT,['options'=>['min_range'=>1]]);
+$episode=filter_var($_GET['episode']??null,FILTER_VALIDATE_INT,['options'=>['min_range'=>1]]);
+
+if (isset($_GET['source']) && $_GET['source'] === '2') {
     header('Content-Type: application/json; charset=utf-8');
-    $cats = categorias_filmes();
-    $out = [];
-    foreach ($cats as $c) {
-        $out[] = [
-            'id'   => (string)($c['category_id']   ?? ''),
-            'nome' => (string)($c['category_name'] ?? ''),
-        ];
+    header('Cache-Control: private, no-store');
+    $video=pm_redeflix_resolve($id, null, null);
+    if (!$video) { echo json_encode(['ok'=>false,'error'=>'rede_source_unavailable']); exit; }
+    $token=bin2hex(random_bytes(16));
+    if (!pm_store_put($token,['url'=>$video,'label'=>'HD','poster'=>'https://i.imgur.com/XB5B8Md.jpeg'])) {
+        echo json_encode(['ok'=>false,'error'=>'player_store_failed']); exit;
     }
-    echo json_encode(['ok'=>true,'categorias'=>$out], JSON_UNESCAPED_UNICODE);
+    $self=strtok($_SERVER['REQUEST_URI']??'/', '?');
+    echo json_encode(['ok'=>true,'server'=>['embed'=>$self.'?embed='.$token]],JSON_UNESCAPED_SLASHES);exit;
+}
+
+if (isset($_GET['source']) && $_GET['source']==='1') {
+    header('Content-Type: application/json; charset=utf-8');
+    header('Cache-Control: no-store');
+    if ($type!=='movie' || !$id) { echo json_encode(['ok'=>false,'error'=>'tmdb_id_required']); exit; }
+    $imdb = tmdbToImdb((string)$id,$type);
+    if (!$imdb) { echo json_encode(['ok'=>false,'error'=>'original_source_unavailable']); exit; }
+    pm_store_init();
+    $manual=(string)($_GET['slug']??'');
+    $slugs=pm_movie_slugs($id ?: pm_tmdb_from_imdb($imdb),$manual);
+    $video=null;
+    foreach ($slugs as $slug) {
+        $video=pm_server1_mp4($slug,$imdb);
+        if ($video) break;
+    }
+    if (!$video) { echo json_encode(['ok'=>false]); exit; }
+    $token=bin2hex(random_bytes(16));
+    if (!pm_store_put($token,['url'=>$video,'label'=>'HD','poster'=>'https://i.imgur.com/XB5B8Md.jpeg'])) {
+        echo json_encode(['ok'=>false]); exit;
+    }
+    $path=strtok($_SERVER['REQUEST_URI']??'/','?');
+    echo json_encode(['ok'=>true,'server'=>['embed'=>$path.'?embed='.$token,'quality'=>'HD']],JSON_UNESCAPED_SLASHES);
     exit;
 }
 
-/* ============================================================
- *  PÁGINA PRINCIPAL (HTML)
- * ============================================================ */
+if (isset($_GET['probe'])) {
+    header('Content-Type: application/json; charset=utf-8');
+    header('Cache-Control: no-store');
+    $q=(string)$_GET['probe'];
+    $imdb = $id ? tmdbToImdb((string)$id, $type) : null;
+    if (!$imdb || !in_array($q,array_merge($qualities,['default']),true)) {
+        http_response_code(400);
+        echo json_encode(['ok'=>false]); exit;
+    }
+    pm_store_gc();
+
+    $cacheKey = 'pm_cache_' . md5($imdb . '|' . $q);
+    $cacheFile = STREAM_DIR . '/' . $cacheKey . '.json';
+    if (is_file($cacheFile)) {
+        $cached = json_decode(@file_get_contents($cacheFile), true);
+        if (is_array($cached) && ($cached['expires'] ?? 0) > time() && !empty($cached['token'])) {
+            $existing = pm_store_get($cached['token']);
+            if ($existing) {
+                $embedUrl = strtok($_SERVER['REQUEST_URI'] ?? '/', '?') . '?embed=' . $cached['token'];
+                echo json_encode(['ok'=>true,'server'=>[
+                    'url'      => $existing['url'],
+                    'original' => $existing['url'],
+                    'quality'  => $q,
+                    'embed'    => $embedUrl,
+                ]], JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE);
+                exit;
+            }
+        }
+    }
+
+    $remote=PLAYER_BASE.rawurlencode($imdb).($q==='default'?'':'&s='.rawurlencode($q));
+    $html=requestUrl($remote,['Origin: https://hyper.hyperappz.site/','Referer: https://hyper.hyperappz.site/']);
+    $links=$html?extractVideoLinks($html):[];
+    $found=null;
+    foreach ($links as $link) {
+        if (!preg_match('~\.mp4(?:\?|$)~i',parse_url($link,PHP_URL_PATH)??'')) continue;
+        $test=testVideoUrl($link);
+        if ($test['ok']) {
+            $token = bin2hex(random_bytes(16));
+            $payload = [
+                'url'    => $link,
+                'label'  => strtoupper($q),
+                'poster' => 'https://i.imgur.com/XB5B8Md.jpeg',
+            ];
+            if (!pm_store_put($token, $payload)) {
+                if (function_exists('apcu_store')) {
+                    apcu_store($token, $payload + ['expires'=>time()+STREAM_TTL], STREAM_TTL);
+                }
+            }
+            pm_store_init();
+            @file_put_contents($cacheFile, json_encode(['token'=>$token,'expires'=>time()+300]), LOCK_EX);
+
+            $embedUrl = strtok($_SERVER['REQUEST_URI'] ?? '/', '?') . '?embed=' . $token;
+            $found = [
+                'url'      => $link,
+                'original' => $link,
+                'quality'  => $q,
+                'embed'    => $embedUrl,
+            ];
+            break;
+        }
+    }
+    echo json_encode(['ok'=>(bool)$found,'server'=>$found], JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE); exit;
+}
+
+$params=['type'=>$type];
+if($id) $params['id']=$id;
+if($season) $params['season']=$season;
+if($episode) $params['episode']=$episode;
+
+$self=strtok($_SERVER['REQUEST_URI']??'/', '?');
+$base=$self.'?'.http_build_query($params);
+// Backdrop TMDB: cache local e fallback visual sem bloquear o player.
+$pmBackdrop = '';
+if ($id && ctype_digit((string)$id)) {
+    $pmMetaCache = sys_get_temp_dir() . '/pm_backdrop_' . ($type === 'tv' ? 'tv_' : 'movie_') . (int)$id . '.json';
+    $pmMeta = null;
+    if (is_file($pmMetaCache) && filemtime($pmMetaCache) > time() - 86400) {
+        $pmMeta = json_decode((string)@file_get_contents($pmMetaCache), true);
+    }
+    if (!is_array($pmMeta) && extension_loaded('curl')) {
+        $pmUrl = 'https://api.themoviedb.org/3/' . ($type === 'tv' ? 'tv' : 'movie') . '/' . (int)$id . '?api_key=' . rawurlencode(TMDB_API_KEY);
+        $pmCurl = curl_init($pmUrl);
+        curl_setopt_array($pmCurl, [CURLOPT_RETURNTRANSFER=>true,CURLOPT_TIMEOUT=>5,CURLOPT_CONNECTTIMEOUT=>3,CURLOPT_FOLLOWLOCATION=>false]);
+        $pmRaw = curl_exec($pmCurl);
+        curl_close($pmCurl);
+        $pmMeta = json_decode(is_string($pmRaw) ? $pmRaw : '', true);
+        if (is_array($pmMeta)) @file_put_contents($pmMetaCache, json_encode($pmMeta), LOCK_EX);
+    }
+    if (is_array($pmMeta)) {
+        $pmImg = $pmMeta['backdrop_path'] ?? $pmMeta['poster_path'] ?? '';
+        if (is_string($pmImg) && preg_match('~^/[a-zA-Z0-9_./-]+$~', $pmImg)) $pmBackdrop = 'https://image.tmdb.org/t/p/w1280' . $pmImg;
+    }
+}
+$pmMediaTitle = is_array($pmMeta ?? null) ? (string)($pmMeta['title'] ?? $pmMeta['name'] ?? '') : '';
+$pmMediaYear = is_array($pmMeta ?? null) ? substr((string)($pmMeta['release_date'] ?? $pmMeta['first_air_date'] ?? ''), 0, 4) : '';
+$pmDisplayTitle = trim($pmMediaTitle . ($pmMediaYear ? ' · ' . $pmMediaYear : ''));
+$pmDisplayTitleJson = json_encode($pmDisplayTitle, JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_UNESCAPED_UNICODE);
+$pmBackdropJson = json_encode($pmBackdrop, JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_UNESCAPED_SLASHES);
 ?>
 <!doctype html>
 <html lang="pt-BR">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="referrer" content="strict-origin-when-cross-origin">
-<title>PlayMoz · Filmes</title>
+<meta name="referrer" content="no-referrer">
+<meta name="robots" content="noindex,nofollow">
+<title>PlayMoz · Player</title>
 <style>
 :root{
   color-scheme:dark;
-  --bg:#050609; --bg-2:#0b0e15; --card:#12151f; --card-h:#1a1e2b;
-  --red:#f43f5e; --red-2:#ff3355; --text:#f1f3f7; --muted:#8b93a7;
-  --line:#1e2230; --radius:14px;
+  --red:#ff0000;
+  --red-soft:#ff3333;
+  --bg:#050609;
+  --panel-1:#1a1d26;
+  --panel-2:#0f1117;
+  --border:#2a2e39;
+  --muted:#9aa1b0;
 }
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-html,body{margin:0;padding:0;background:var(--bg);color:var(--text);
-  font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;overflow-x:hidden}
-a{color:inherit;text-decoration:none}
-button{font-family:inherit}
+html,body{margin:0;padding:0;width:100%;height:100%;background:var(--bg);color:#fff;font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,"Open Sans",sans-serif;overflow:hidden}
 
-/* ---------- HEADER ---------- */
-header{
-  position:sticky;top:0;z-index:100;
-  background:linear-gradient(180deg,rgba(5,6,9,.98),rgba(5,6,9,.85) 80%,transparent);
-  backdrop-filter:blur(10px);
-  padding:14px 22px;
-  display:flex;align-items:center;gap:16px;flex-wrap:wrap;
-}
-.logo{display:flex;align-items:center;gap:10px;font-weight:800;font-size:20px;color:var(--red);letter-spacing:-.02em}
-.logo svg{width:28px;height:28px}
-.search{flex:1;min-width:220px;max-width:520px;position:relative}
-.search input{
-  width:100%;padding:11px 14px 11px 42px;
-  background:var(--card);border:1px solid var(--line);border-radius:11px;
-  color:var(--text);font-size:14px;outline:none;transition:border .2s;
-}
-.search input:focus{border-color:var(--red)}
-.search svg{
-  position:absolute;left:13px;top:50%;transform:translateY(-50%);
-  width:18px;height:18px;color:var(--muted);pointer-events:none;
-}
+#pm-player-stage{position:fixed;inset:0;display:none;background:#000;z-index:9000}
+#pm-player-stage.on{display:block}
+#pm-frame{width:100%;height:100%;border:0;display:block;background:#000}
 
-/* ---------- MAIN / CONTAINER ---------- */
-main{max-width:1500px;margin:0 auto;padding:8px 22px 80px}
-.section-title{
-  display:flex;align-items:center;gap:10px;
-  font-size:20px;font-weight:700;margin:24px 0 16px;
+#pm-screen{
+  position:fixed;inset:0;z-index:10000;
+  display:grid;place-items:center;padding:16px;
+  padding:max(16px,env(safe-area-inset-top)) max(16px,env(safe-area-inset-right)) max(16px,env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left));
+  background:
+    radial-gradient(120% 80% at 50% 0%,#2a1418 0%,transparent 55%),
+    radial-gradient(120% 80% at 50% 100%,#121620 0%,transparent 60%),
+    var(--bg);
+  transition:opacity .35s ease,visibility .35s ease;
 }
-.section-title svg{width:22px;height:22px;color:var(--red)}
+#pm-screen.off{opacity:0;visibility:hidden;pointer-events:none}
 
-/* ---------- CATEGORIAS ---------- */
-.cats{
-  display:flex;gap:8px;overflow-x:auto;padding-bottom:6px;
-  scrollbar-width:none;-ms-overflow-style:none;
+.pm-modal{
+  width:100%;max-width:380px;
+  background:linear-gradient(160deg,var(--panel-1),var(--panel-2));
+  border:1px solid var(--border);border-radius:22px;
+  box-shadow:0 30px 90px rgba(0,0,0,.75),0 0 0 1px rgba(255,255,255,.03) inset;
+  overflow:hidden;display:flex;flex-direction:column;
+  max-height:calc(100dvh - 32px);
+  animation:pmIn .4s cubic-bezier(.2,.9,.3,1.15);
 }
-.cats::-webkit-scrollbar{display:none}
-.cat-btn{
-  flex:0 0 auto;padding:8px 16px;border-radius:999px;
-  background:var(--card);border:1px solid var(--line);
-  color:var(--muted);font-size:13px;font-weight:600;
-  cursor:pointer;transition:all .2s;white-space:nowrap;
+@keyframes pmIn{from{opacity:0;transform:translateY(12px) scale(.97)}to{opacity:1;transform:none}}
+
+.pm-head{padding:20px 22px 16px;display:flex;align-items:center;gap:13px;border-bottom:1px solid rgba(255,255,255,.06)}
+.pm-logo{
+  flex:0 0 44px;width:44px;height:44px;display:grid;place-items:center;border-radius:13px;
+  background:linear-gradient(145deg,rgba(255,0,0,.22),rgba(255,0,0,.06));
+  border:1px solid rgba(255,0,0,.35);color:#ff4d4d;
 }
-.cat-btn:hover{background:var(--card-h);color:var(--text)}
-.cat-btn.ativo{
-  background:linear-gradient(145deg,var(--red),#d63050);
-  border-color:transparent;color:#fff;
-  box-shadow:0 6px 18px rgba(244,63,94,.35);
+.pm-logo svg{width:22px;height:22px}
+.pm-head-text{min-width:0}
+.pm-head-text small{display:block;font-size:10px;letter-spacing:.16em;font-weight:800;color:#ff5c5c;text-transform:uppercase;margin-bottom:2px}
+.pm-head-text h1{margin:0;font-size:16px;font-weight:700;line-height:1.2;overflow-wrap:anywhere}
+
+.pm-body{
+  padding:24px 22px 22px;overflow-y:auto;overscroll-behavior:contain;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  text-align:center;min-height:180px;
 }
 
-/* ---------- GRID ---------- */
-.grid{
-  display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));
-  gap:16px;
+.pm-spin{
+  width:50px;height:50px;border-radius:50%;
+  border:3px solid rgba(255,255,255,.08);border-top-color:var(--red);
+  animation:spin .8s linear infinite;margin:0 auto 16px;position:relative;
 }
-.card{
-  background:var(--card);border-radius:var(--radius);overflow:hidden;
-  cursor:pointer;transition:transform .22s,box-shadow .22s;
-  border:1px solid var(--line);position:relative;
-}
-.card:hover{transform:translateY(-4px);box-shadow:0 12px 30px rgba(0,0,0,.5);border-color:var(--red)}
-.card img{width:100%;aspect-ratio:2/3;object-fit:cover;display:block;background:var(--bg-2)}
-.card .info{padding:10px 12px 12px}
-.card .info strong{
-  display:block;font-size:13px;line-height:1.35;margin-bottom:4px;
-  overflow:hidden;text-overflow:ellipsis;display:-webkit-box;
-  -webkit-line-clamp:2;-webkit-box-orient:vertical;
-}
-.card .info small{color:var(--muted);font-size:11px;display:flex;align-items:center;gap:4px}
-.card .info small svg{width:12px;height:12px;color:#f5b83d}
-
-/* ---------- LOADING / EMPTY ---------- */
-.msg{text-align:center;padding:60px 20px;color:var(--muted)}
-.spin{
-  width:38px;height:38px;margin:0 auto 14px;
-  border:3px solid rgba(255,255,255,.1);border-top-color:var(--red);
-  border-radius:50%;animation:spin .8s linear infinite;
-}
+.pm-spin::after{content:"";position:absolute;inset:6px;border-radius:50%;border:3px solid transparent;border-top-color:rgba(255,255,255,.22);animation:spin 1.4s linear infinite reverse}
 @keyframes spin{to{transform:rotate(360deg)}}
 
-/* ---------- LOAD MORE ---------- */
-#mais{
-  display:block;margin:32px auto 0;padding:13px 36px;
-  background:linear-gradient(145deg,var(--red),#d63050);
-  color:#fff;border:0;border-radius:11px;
-  font-size:14px;font-weight:700;cursor:pointer;
-  box-shadow:0 8px 24px rgba(244,63,94,.35);transition:transform .15s;
-}
-#mais:hover{transform:scale(1.03)}
-#mais:disabled{opacity:.5;cursor:not-allowed;transform:none}
+.pm-body h2{margin:0 0 8px;font-size:16px;font-weight:700}
+.pm-body p{margin:0;color:var(--muted);font-size:13px;line-height:1.55;max-width:280px}
 
-/* ---------- MODAL ---------- */
-#modal{
-  position:fixed;inset:0;z-index:999;
-  background:rgba(2,3,7,.92);backdrop-filter:blur(8px);
-  display:none;align-items:center;justify-content:center;
-  padding:20px;overflow-y:auto;
-}
-#modal.on{display:flex}
-.modal-box{
-  width:100%;max-width:920px;
-  background:linear-gradient(160deg,#141826,#0a0d15);
-  border:1px solid var(--line);border-radius:20px;
-  box-shadow:0 40px 100px rgba(0,0,0,.8);
-  overflow:hidden;position:relative;
-  animation:modalIn .32s cubic-bezier(.2,.9,.3,1.1);
-  margin:auto;
-}
-@keyframes modalIn{from{opacity:0;transform:scale(.95) translateY(12px)}to{opacity:1;transform:none}}
-.close{
-  position:absolute;top:14px;right:14px;z-index:10;
-  width:38px;height:38px;border-radius:50%;
-  background:rgba(0,0,0,.6);border:1px solid rgba(255,255,255,.15);
-  color:#fff;cursor:pointer;display:grid;place-items:center;
-  transition:background .2s;
-}
-.close:hover{background:var(--red)}
-.close svg{width:18px;height:18px}
-.player-wrap{
-  position:relative;width:100%;aspect-ratio:16/9;background:#000;
-}
-.player-wrap iframe{width:100%;height:100%;border:0;display:block}
-.modal-info{padding:24px 26px 28px}
-.modal-info h2{margin:0 0 10px;font-size:22px;font-weight:800;letter-spacing:-.02em}
-.modal-meta{color:var(--muted);font-size:13px;margin-bottom:16px;display:flex;flex-wrap:wrap;gap:10px}
-.modal-meta span{display:inline-flex;align-items:center;gap:5px}
-.modal-meta svg{width:14px;height:14px}
-.modal-info p{margin:0;color:#c4c8d0;font-size:14px;line-height:1.7;max-width:720px}
+.pm-foot{padding:11px 20px 15px;border-top:1px solid rgba(255,255,255,.06);text-align:center;color:#7d8494;font-size:11px}
+.pm-foot:empty{display:none;border:0;padding:0}
 
-@media(max-width:520px){
-  header{padding:12px 16px;gap:10px}
-  .logo{font-size:17px}
-  .logo svg{width:24px;height:24px}
-  main{padding:8px 14px 60px}
-  .grid{grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:12px}
-  .card .info{padding:8px 10px 10px}
-  .card .info strong{font-size:12px}
-  .modal-info{padding:18px 18px 22px}
-  .modal-info h2{font-size:18px}
+.pm-servers{display:flex;flex-direction:column;gap:10px;width:100%;margin-top:22px}
+.pm-server-btn{
+  display:flex;align-items:center;gap:13px;width:100%;padding:14px 15px;
+  border-radius:14px;background:linear-gradient(145deg,#202430,#161922);
+  border:1px solid #333846;color:#fff;text-align:left;cursor:pointer;
+  transition:transform .15s,border-color .2s,background .2s,box-shadow .2s;
+  min-width:0;font-family:inherit;font-size:inherit;
 }
+.pm-server-btn:hover,.pm-server-btn:focus-visible{
+  border-color:var(--red-soft);background:linear-gradient(145deg,#2a1e22,#1c1518);
+  box-shadow:0 8px 24px rgba(255,0,0,.15);outline:none;
+}
+.pm-server-btn:active{transform:scale(.98)}
+.pm-server-btn.primary{border-color:rgba(255,0,0,.5);background:linear-gradient(145deg,#2c1a1c,#1a1012)}
+.pm-server-btn-icon{
+  flex:0 0 42px;width:42px;height:42px;display:grid;place-items:center;border-radius:12px;
+  background:linear-gradient(145deg,rgba(255,0,0,.22),rgba(255,0,0,.05));
+  border:1px solid rgba(255,0,0,.3);color:#ff4d4d;
+}
+.pm-server-btn-icon svg{width:19px;height:19px}
+.pm-server-btn-info{flex:1;min-width:0;overflow:hidden}
+.pm-server-btn-info strong{display:block;font-size:14.5px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pm-server-btn-info small{display:block;margin-top:2px;font-size:11.5px;color:#9aa1b0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pm-server-btn-arrow{flex:0 0 18px;color:#6b7280;display:grid;place-items:center;transition:transform .2s,color .2s}
+.pm-server-btn:hover .pm-server-btn-arrow{color:#ff4d4d;transform:translateX(3px)}
+.pm-server-btn-arrow svg{width:16px;height:16px}
+
+.pm-alert{
+  width:60px;height:60px;border-radius:50%;display:grid;place-items:center;
+  background:rgba(255,0,0,.12);border:1px solid rgba(255,0,0,.35);color:#ff4d4d;
+  margin:0 auto 16px;animation:popIn .5s cubic-bezier(.2,.9,.3,1.5);
+}
+.pm-alert svg{width:28px;height:28px}
+@keyframes popIn{from{transform:scale(.4);opacity:0}to{transform:scale(1);opacity:1}}
+
+@media (max-width:380px){
+  .pm-modal{border-radius:19px}
+  .pm-head{padding:17px 18px 14px;gap:11px}
+  .pm-logo{flex:0 0 40px;width:40px;height:40px;border-radius:11px}
+  .pm-logo svg{width:20px;height:20px}
+  .pm-head-text h1{font-size:15px}
+  .pm-body{padding:20px 18px 18px;min-height:170px}
+  .pm-body h2{font-size:15px}
+  .pm-body p{font-size:12.5px}
+  .pm-server-btn{padding:12px 13px}
+  .pm-server-btn-icon{flex:0 0 38px;width:38px;height:38px}
+  .pm-server-btn-info strong{font-size:13.5px}
+  .pm-server-btn-info small{font-size:11px}
+}
+/* Acabamento visual PlayMoz */
+:root{--pm-backdrop:none;--pm-accent:#f43f5e}
+#pm-screen{background:linear-gradient(180deg,rgba(4,6,12,.65),rgba(4,6,12,.87) 60%,#06070d),var(--pm-backdrop) center/cover no-repeat,#090b12 !important;backdrop-filter:blur(2px)}
+.pm-modal{width:min(490px,100%) !important;border:1px solid rgba(255,255,255,.17)!important;border-radius:24px!important;background:linear-gradient(160deg,rgba(28,32,44,.97),rgba(8,11,20,.98))!important;box-shadow:0 28px 90px rgba(0,0,0,.68),0 0 0 1px rgba(255,255,255,.04)!important}
+.pm-head{border-bottom:1px solid rgba(255,255,255,.06)}
+.pm-server-btn{background:rgba(255,255,255,.045)!important;border:1px solid rgba(255,255,255,.11)!important;border-radius:16px!important;padding:16px!important;min-height:73px}
+.pm-server-btn:hover,.pm-server-btn:focus-visible{background:rgba(244,63,94,.13)!important;border-color:rgba(244,63,94,.6)!important}
+.pm-server-btn-icon{border-radius:14px!important;background:rgba(244,63,94,.13)!important}
+.pm-foot{line-height:1.6!important}
+.pm-loading-art{height:92px;position:relative;display:flex;align-items:center;justify-content:center;margin-bottom:12px}
+.pm-loading-art span{font-size:12px;letter-spacing:.2em;font-weight:800;color:#fff}
+.pm-loading-ring{position:absolute;width:82px;height:82px;border-radius:50%;border:3px solid rgba(255,255,255,.08);border-top-color:#ff415e;border-right-color:#ff415e;animation:spin 1.15s linear infinite}
+@media(prefers-reduced-motion:reduce){.pm-loading-ring{animation:none}.pm-server-btn{transition:none}}
+
+/* V6 — imagem inteira visível e selector leve */
+#pm-screen{
+  inset:0!important;
+  min-height:100dvh!important;
+  padding:clamp(8px,2vw,14px)!important;
+  background-image:linear-gradient(rgba(5,7,13,.14),rgba(5,7,13,.34)),var(--pm-backdrop)!important;
+  background-position:center center,center center!important;
+  background-size:cover,cover!important;
+  background-repeat:no-repeat,no-repeat!important;
+  background-color:#080b11!important;
+  backdrop-filter:none!important;
+  -webkit-backdrop-filter:none!important;
+}
+.pm-modal{
+  width:min(292px,calc(100vw - 18px))!important;
+  max-width:292px!important;
+  max-height:calc(100dvh - 18px)!important;
+  background:rgba(9,12,20,.24)!important;
+  backdrop-filter:blur(4px) saturate(108%)!important;
+  -webkit-backdrop-filter:blur(4px) saturate(108%)!important;
+  border:1px solid rgba(255,255,255,.23)!important;
+  border-radius:15px!important;
+  box-shadow:0 8px 28px rgba(0,0,0,.22)!important;
+}
+.pm-head{padding:13px 12px 4px!important}
+.pm-head-text h1{font-size:15px!important;line-height:1.25!important}
+.pm-body{padding:7px 12px 12px!important;min-height:0!important}
+.pm-body h2{font-size:12px!important;margin:0 0 6px!important}
+.pm-body p{font-size:10px!important;margin:0 0 5px!important}
+.pm-servers{margin-top:6px!important;gap:6px!important}
+.pm-server-btn{min-height:43px!important;padding:7px 9px!important;gap:8px!important;border-radius:9px!important;background:rgba(11,15,24,.38)!important;border:1px solid rgba(255,255,255,.18)!important}
+.pm-server-btn-icon{width:27px!important;height:27px!important;flex:0 0 27px!important;border-radius:7px!important;background:rgba(255,255,255,.12)!important}
+.pm-server-btn-icon svg{width:14px!important;height:14px!important}
+.pm-server-btn-info strong{font-size:11px!important}
+.pm-server-btn-info small{font-size:9px!important}
+.pm-server-btn-arrow svg{width:12px!important;height:12px!important}
+.pm-foot{font-size:8px!important;padding:0 11px 9px!important}
+.pm-loading-art{height:50px!important;margin-bottom:6px!important}
+.pm-loading-ring{width:43px!important;height:43px!important}
+.pm-loading-art span{font-size:8px!important}
+@media(max-width:340px){
+  .pm-modal{width:min(270px,calc(100vw - 16px))!important}
+  .pm-head{padding:10px 9px 3px!important}
+  .pm-head-text h1{font-size:13px!important}
+  .pm-body{padding:6px 9px 9px!important}
+  .pm-server-btn{min-height:40px!important;padding:6px 7px!important}
+}
+@media(max-height:440px){.pm-modal{max-height:94dvh!important}.pm-head{padding-top:7px!important}.pm-body{padding-top:3px!important}.pm-server-btn{min-height:38px!important}}
 </style>
 </head>
 <body>
 
-<!-- ================= HEADER ================= -->
-<header>
-  <a class="logo" href="index.php">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-      <rect x="3" y="3" width="18" height="18" rx="5"/>
-      <path d="m10 8 6 4-6 4V8Z" fill="currentColor" stroke="none"/>
-    </svg>
-    PlayMoz
-  </a>
-  <div class="search">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-      <circle cx="11" cy="11" r="7"/>
-      <path d="m20 20-3.5-3.5"/>
-    </svg>
-    <input id="busca" type="search" placeholder="Pesquisar filmes..." autocomplete="off">
-  </div>
-</header>
+<div id="pm-player-stage" aria-hidden="true">
+  <iframe id="pm-frame" allow="autoplay; encrypted-media; fullscreen; picture-in-picture" referrerpolicy="no-referrer"></iframe>
+</div>
 
-<!-- ================= MAIN ================= -->
-<main>
-  <div class="section-title">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M4 6h16M4 12h16M4 18h10"/>
-    </svg>
-    <span>Categorias</span>
-  </div>
-  <div class="cats" id="cats">
-    <button class="cat-btn ativo" data-cat="">Todos</button>
-  </div>
+<div id="pm-screen" role="dialog" aria-modal="true" aria-labelledby="pm-heading">
+  <section class="pm-modal">
+    <header class="pm-head">
+      <div class="pm-logo">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="3" y="3" width="18" height="18" rx="5"/>
+          <path d="m10 8 6 4-6 4V8Z"/>
+        </svg>
+      </div>
+      <div class="pm-head-text">
+        <small>PLAYMOZ · REPRODUÇÃO</small>
+        <h1 id="pm-heading">A carregar fonte...</h1>
+      </div>
+    </header>
 
-  <div class="section-title" style="margin-top:32px">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-      <rect x="3" y="4" width="18" height="16" rx="3"/>
-      <path d="M3 9h18M9 4v5"/>
-    </svg>
-    <span id="titulo-secao">Filmes</span>
-  </div>
-
-  <div class="grid" id="grid"></div>
-  <div class="msg" id="msg">
-    <div class="spin"></div>
-    <div>Carregando filmes...</div>
-  </div>
-  <button id="mais" style="display:none">Carregar mais</button>
-</main>
-
-<!-- ================= MODAL ================= -->
-<div id="modal">
-  <div class="modal-box">
-    <button class="close" onclick="fecharModal()">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M6 6l12 12M18 6 6 18"/>
-      </svg>
-    </button>
-    <div class="player-wrap">
-      <iframe id="frame" allow="autoplay; encrypted-media; fullscreen; picture-in-picture"
-              referrerpolicy="strict-origin-when-cross-origin"></iframe>
+    <div class="pm-body" id="pm-content">
+      <div class="pm-spin"></div>
+      <h2>A preparar o vídeo</h2>
+      <p>Estamos a preparar a experiência de reprodução.</p>
     </div>
-    <div class="modal-info">
-      <h2 id="m-titulo"></h2>
-      <div class="modal-meta" id="m-meta"></div>
-      <p id="m-sinopse"></p>
-    </div>
-  </div>
+
+    <footer class="pm-foot" id="pm-foot">Aguarda um momento...</footer>
+  </section>
 </div>
 
 <script>
 'use strict';
-const $ = id => document.getElementById(id);
-let paginaAtual = 1;
-let catAtual = '';
-let buscaAtual = '';
-let carregando = false;
-let temMais = true;
+const PM_BACKDROP = <?= $pmBackdropJson ?>;
+const PM_DISPLAY_TITLE = <?= $pmDisplayTitleJson ?>;
+const PM_BASE = <?= json_encode($base, JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT) ?>;
+const PM_QUALITIES = <?= json_encode(array_merge($qualities,['default'])) ?>;
+const PM_ID = <?= (int)$id ?>;
+const PM_TYPE = <?= json_encode($type) ?>;
+const PM_EMBED_URL = PM_ID ? ('<?= EMBED_BASE ?>' + PM_TYPE + '/' + PM_ID) : '';
 
-/* ============ HELPERS ============ */
-const iconeEstrela = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="m12 2 3.1 6.3 6.9 1-5 4.9 1.2 6.9L12 17.8 5.8 21.1 7 14.2 2 9.3l6.9-1L12 2z"/></svg>';
-const iconeCalendario = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>';
-const iconeTag = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41 13.42 20.58a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82Z"/><circle cx="7" cy="7" r="1.5" fill="currentColor"/></svg>';
-const fallbackPoster = 'data:image/svg+xml;utf8,' + encodeURIComponent(
-  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 450"><rect fill="#161922" width="300" height="450"/><g fill="none" stroke="#2a2f3e" stroke-width="3"><rect x="90" y="180" width="120" height="90" rx="12"/><path d="m130 200 40 25-40 25z" fill="#2a2f3e"/></g></svg>'
-);
+const pmEl = id => document.getElementById(id);
+function pmEscape(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+const ICONS = {
+  play: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 5 11 7-11 7V5Z"/></svg>',
+  layers: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 2 9 5-9 5-9-5 9-5Z"/><path d="m3 12 9 5 9-5"/><path d="m3 17 9 5 9-5"/></svg>',
+  arrow: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>',
+  alert: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg>'
+};
 
-function escapeHtml(s) {
-  return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function pmModal(title, html, foot) {
+  pmEl('pm-heading').textContent = title;
+  pmEl('pm-content').innerHTML = html;
+  pmEl('pm-foot').textContent = foot || '';
+  pmEl('pm-screen').classList.remove('off');
+}
+function pmLoading() {
+  pmModal('A preparar a reprodução',
+    '<div class="pm-loading-art"><div class="pm-loading-ring"></div><span>PLAYMOZ</span></div><h2>A estabelecer ligação segura</h2><p>Estamos a verificar a disponibilidade do vídeo. A reprodução começa assim que a fonte estiver pronta.</p>',
+    'A ligação pode demorar alguns instantes, dependendo do servidor.');
+}
+function pmValidUrl(u) {
+  try { const x = new URL(u, location.href); return x.protocol === 'https:' || x.protocol === 'http:'; }
+  catch { return false; }
+}
+function pmOpenInFrame(url) {
+  const stage = pmEl('pm-player-stage');
+  const frame = pmEl('pm-frame');
+  pmEl('pm-screen').classList.add('off');
+  stage.classList.add('on');
+  stage.setAttribute('aria-hidden','false');
+  setTimeout(() => { frame.src = url; }, 30);
+}
+function pmCloseFrame() {
+  const stage = pmEl('pm-player-stage');
+  const frame = pmEl('pm-frame');
+  stage.classList.remove('on');
+  stage.setAttribute('aria-hidden','true');
+  frame.src = 'about:blank';
+  pmShowServers();
 }
 
-/* ============ CARREGAR CATEGORIAS ============ */
-async function carregarCategorias() {
-  try {
-    const r = await fetch('?acao=categorias');
-    const d = await r.json();
-    if (!d.ok) return;
-    const box = $('cats');
-    for (const c of d.categorias) {
-      const b = document.createElement('button');
-      b.className = 'cat-btn';
-      b.dataset.cat = c.id;
-      b.textContent = c.nome;
-      box.appendChild(b);
-    }
-  } catch (e) { /* silencioso */ }
+let pmFoundServer = null;
+let pmOpening = false;
+function pmServerButton(n, description) {
+  return '<button class="pm-server-btn" type="button" id="pm-s'+n+'">'+
+    '<span class="pm-server-btn-icon">'+(n===3?ICONS.layers:ICONS.play)+'</span>'+
+    '<span class="pm-server-btn-info"><strong>Servidor '+n+'</strong><small>'+description+'</small></span>'+
+    '<span class="pm-server-btn-arrow">'+ICONS.arrow+'</span></button>';
 }
-
-/* ============ CARREGAR FILMES ============ */
-async function carregarFilmes(reset = false) {
-  if (carregando) return;
-  if (!reset && !temMais) return;
-  carregando = true;
-
-  if (reset) {
-    paginaAtual = 1;
-    temMais = true;
-    $('grid').innerHTML = '';
-    $('msg').style.display = 'block';
-    $('msg').innerHTML = '<div class="spin"></div><div>Carregando filmes...</div>';
-    $('mais').style.display = 'none';
+function pmShowServers() {
+  pmOpening = false;
+  pmModal('Selecione o servidor',
+    '<h2>'+pmEscape(PM_DISPLAY_TITLE || 'Pronto para assistir')+'</h2><div class="pm-servers">'+
+    pmServerButton(1,'Fonte principal · Reprodução directa')+
+    pmServerButton(2,'Reprodução optimizada · HD')+
+    pmServerButton(3,'Alternativa de reprodução')+'</div>',
+    'Escolha uma opção para iniciar a reprodução.');
+  pmEl('pm-s1').onclick = () => pmLoadSource(1);
+  pmEl('pm-s2').onclick = () => pmLoadSource(2);
+  pmEl('pm-s3').onclick = () => pmLoadSource(3);
+}
+function pmShowFallback() { pmShowServers(); }
+function pmErrorSource(n, message) {
+  pmOpening = false;
+  pmShowServers();
+  const b=pmEl('pm-s'+n);
+  if (b) { const small=b.querySelector('small'); if(small) small.textContent='Não respondeu · Escolhe outra opção'; }
+  pmEl('pm-foot').textContent = message || 'Não conseguimos estabelecer ligação. Selecciona outra opção para continuar.';
+}
+async function pmLoadSource(n) {
+  if (pmOpening) return;
+  pmOpening = true;
+  if (n===3) {
+    if (!pmValidUrl(PM_EMBED_URL) || !PM_ID) { pmErrorSource(n,'Player alternativo indisponível'); return; }
+    pmOpenInFrame(PM_EMBED_URL); pmOpening=false; return;
   }
-
+  pmLoading();
   try {
-    const params = new URLSearchParams({
-      acao: 'lista',
-      p: paginaAtual,
-    });
-    if (catAtual) params.set('cat', catAtual);
-    if (buscaAtual) params.set('q', buscaAtual);
-
-    const r = await fetch('?' + params.toString());
-    const d = await r.json();
-    if (!d.ok) throw new Error(d.error || 'Erro');
-
-    $('msg').style.display = 'none';
-
-    if (d.filmes.length === 0 && paginaAtual === 1) {
-      $('msg').style.display = 'block';
-      $('msg').innerHTML = '<div style="padding:30px 0">Nenhum filme encontrado.</div>';
-    }
-
-    const grid = $('grid');
-    for (const f of d.filmes) {
-      const card = document.createElement('div');
-      card.className = 'card';
-      card.onclick = () => abrirFilme(f.stream_id);
-      card.innerHTML =
-        '<img src="' + escapeHtml(f.poster || fallbackPoster) + '" alt="' + escapeHtml(f.nome) + '" loading="lazy" onerror="this.src=\'' + fallbackPoster + '\'">' +
-        '<div class="info">' +
-          '<strong>' + escapeHtml(f.nome) + '</strong>' +
-          '<small>' + (f.rating ? iconeEstrela + ' ' + escapeHtml(f.rating) : '') +
-          (f.ano ? (f.rating ? ' · ' : '') + escapeHtml(f.ano) : '') + '</small>' +
-        '</div>';
-      grid.appendChild(card);
-    }
-
-    temMais = !!d.tem_mais;
-    $('mais').style.display = temMais ? 'block' : 'none';
-  } catch (e) {
-    $('msg').style.display = 'block';
-    $('msg').innerHTML = '<div>Erro: ' + escapeHtml(e.message) + '</div>';
-  } finally {
-    carregando = false;
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 28000);
+    let response;
+    try {
+      response=await fetch(new URL(PM_BASE + '&source='+n, window.location.href).href, {cache:'no-store', credentials:'same-origin', signal:ctrl.signal});
+    } finally { clearTimeout(timer); }
+    const data=await response.json().catch(() => { throw new Error('O servidor não devolveu uma resposta JSON válida (HTTP '+response.status+').'); });
+    const embed=data?.server?.embed;
+    if (!response.ok || !data.ok || !embed || !pmValidUrl(embed)) throw new Error(data.error || 'Fonte indisponível');
+    pmOpenInFrame(embed);
+    pmOpening=false;
+  } catch(e) { pmErrorSource(n, 'Servidor '+n+': '+(e.name==='AbortError'?'A ligação demorou demasiado. Tenta novamente.':(e.message==='Failed to fetch'?'Falha de rede ou pedido bloqueado. Verifica a ligação.':(e.message||'Não foi possível iniciar este vídeo. Escolhe outra fonte.')))); }
+}
+function pmScan() {
+  if (!PM_ID) {
+    pmModal('ID TMDB em falta','<div class="pm-alert">'+ICONS.alert+'</div><h2>Indica o ID TMDB</h2>', '');
+    return;
   }
+  pmShowServers();
 }
 
-/* ============ ABRIR FILME (modal) ============ */
-async function abrirFilme(id) {
-  const modal = $('modal');
-  modal.classList.add('on');
-  document.body.style.overflow = 'hidden';
-
-  $('m-titulo').textContent = 'Carregando...';
-  $('m-meta').innerHTML = '';
-  $('m-sinopse').textContent = '';
-  $('frame').src = 'about:blank';
-
-  try {
-    const r = await fetch('?acao=filme&id=' + encodeURIComponent(id));
-    const d = await r.json();
-    if (!d.ok) throw new Error(d.error || 'Erro');
-
-    $('m-titulo').textContent = d.nome || 'Sem título';
-    $('m-meta').innerHTML =
-      (d.ano    ? '<span>' + iconeCalendario + escapeHtml(d.ano) + '</span>' : '') +
-      (d.genero ? '<span>' + iconeTag + escapeHtml(d.genero) + '</span>' : '') +
-      (d.rating ? '<span>' + iconeEstrela + escapeHtml(d.rating) + '</span>' : '');
-    $('m-sinopse').textContent = d.sinopse || '';
-
-    // Abre player
-    $('frame').src = d.embed;
-  } catch (e) {
-    $('m-titulo').textContent = 'Erro';
-    $('m-sinopse').textContent = e.message;
+window.addEventListener('message', (ev) => {
+  if (ev && ev.data && ev.data.type === 'playmoz-close') {
+    pmCloseFrame();
   }
-}
-
-function fecharModal() {
-  $('modal').classList.remove('on');
-  document.body.style.overflow = '';
-  $('frame').src = 'about:blank';
-}
-
-/* ============ EVENTOS ============ */
-$('cats').addEventListener('click', (e) => {
-  const btn = e.target.closest('.cat-btn');
-  if (!btn) return;
-  document.querySelectorAll('.cat-btn').forEach(b => b.classList.remove('ativo'));
-  btn.classList.add('ativo');
-  catAtual = btn.dataset.cat || '';
-  carregarFilmes(true);
 });
 
-let timerBusca = null;
-$('busca').addEventListener('input', (e) => {
-  clearTimeout(timerBusca);
-  timerBusca = setTimeout(() => {
-    buscaAtual = e.target.value.trim();
-    carregarFilmes(true);
-  }, 350);
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && pmEl('pm-player-stage').classList.contains('on')) {
+    pmCloseFrame();
+  }
 });
 
-$('mais').addEventListener('click', () => {
-  paginaAtual++;
-  carregarFilmes(false);
-});
-
-document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') fecharModal();
-});
-
-$('modal').addEventListener('click', (e) => {
-  if (e.target.id === 'modal') fecharModal();
-});
-
-/* ============ INIT ============ */
-carregarCategorias();
-carregarFilmes(true);
+document.addEventListener('DOMContentLoaded', () => { if (PM_BACKDROP) document.documentElement.style.setProperty('--pm-backdrop', 'url(\"' + PM_BACKDROP.replace(/\"/g, '') + '\")'); pmScan(); });
 </script>
+<?php
+$pmRefHost = strtolower((string)(parse_url($_SERVER["HTTP_REFERER"] ?? "", PHP_URL_HOST) ?: ""));
+$pmOwnHost = strtolower((string)($_SERVER["HTTP_HOST"] ?? ""));
+$pmNoClickAds = in_array($pmRefHost, ["playmoz.xyz", "golplay.site"], true) || in_array($pmOwnHost, ["playmoz.xyz", "golplay.site"], true);
+if (!$pmNoClickAds):
+?>
+<script>
+var link = "https://omg10.com/4/10811407";
+var tempo = 120000; // 2 minutos
+var ultimo = 0;
+
+document.addEventListener('click', function() {
+    var agora = Date.now();
+    if (agora - ultimo >= tempo) {
+        window.open(link, '_blank');
+        ultimo = agora;
+    }
+});
+</script>
+<?php endif; ?>
 </body>
 </html>
