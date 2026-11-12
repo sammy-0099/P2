@@ -1,8 +1,9 @@
 <?php
-/** PlayMoz Player — fonte única mgeb.space (.ts), URL protegida por redirect 302. PHP 7.4+ */
+/** PlayMoz Player — fonte mgeb.space via redirect 302. Sem proxy PHP. PHP 7.4+ */
 
 /* ============================================================
  *  CONFIGURAÇÃO INTERNA — NUNCA EXPOR AO CLIENTE
+ *  (só existem no PHP; o browser nunca as vê)
  * ============================================================ */
 define('MGEB_DOMAIN', 'https://mgeb.space');
 define('MGEB_USER',   'Feljo');
@@ -16,7 +17,7 @@ define('STREAM_DIR', sys_get_temp_dir() . '/pm_streams');
 define('STREAM_TTL', 1800); // 30 min
 
 /* ============================================================
- *  TOKEN STORE
+ *  TOKEN STORE (ficheiro, sem cookies)
  * ============================================================ */
 function pm_store_init(): void {
     if (!is_dir(STREAM_DIR)) @mkdir(STREAM_DIR, 0700, true);
@@ -41,29 +42,20 @@ function pm_store_get(string $token): ?array {
     if (($data['expires'] ?? 0) < time()) { @unlink($file); return null; }
     return $data;
 }
-function pm_store_gc(): void {
-    if (random_int(1, 100) !== 1) return;
-    pm_store_init();
-    foreach ((array)@glob(STREAM_DIR . '/*.json') as $f) {
-        $raw = @file_get_contents($f);
-        $d = $raw ? json_decode($raw, true) : null;
-        if (!is_array($d) || ($d['expires'] ?? 0) < time()) @unlink($f);
-    }
-}
 
 function pm_is_id(string $id): bool {
     return (bool)preg_match('/^[0-9]{1,12}$/', $id);
 }
 
-/** URL REAL (só PHP conhece). NUNCA vai ao browser. */
+/** URL REAL do mgeb — só o PHP conhece. */
 function pm_mgeb_url(string $id): string {
     return MGEB_DOMAIN . '/movie/' . rawurlencode(MGEB_USER) . '/' . rawurlencode(MGEB_PASS) . '/' . rawurlencode($id) . '.ts';
 }
 
 /* ============================================================
- *  ENDPOINT: ?go=<token>  → 302 redirect para o CDN do mgeb
- *  O JW Player segue o 302 e toca HLS direto do CDN
- *  (sem proxy → não quebra os segmentos .ts)
+ *  ENDPOINT ?go=<token>  →  302 para https://mgeb.space/.../ID.ts
+ *  O mgeb.space responde com outro 302 para o CDN real
+ *  O JW Player segue os DOIS redirects e toca o HLS
  * ============================================================ */
 if (isset($_GET['go'])) {
     $token = (string)$_GET['go'];
@@ -74,7 +66,8 @@ if (isset($_GET['go'])) {
         echo 'Fonte indisponível';
         exit;
     }
-    // Redireciona para a URL real. O browser/JW segue e toca direto.
+    // Redirect 1: nosso domínio → mgeb.space/.../ID.ts
+    // (o browser/JW NÃO vê Feljo nem senha — só o path)
     header('Cache-Control: private, no-store');
     header('Referrer-Policy: no-referrer');
     header('Location: ' . $entry['url'], true, 302);
@@ -82,7 +75,7 @@ if (isset($_GET['go'])) {
 }
 
 /* ============================================================
- *  API: ?source=1 → devolve { ok, server: { embed: "?embed=..." } }
+ *  API ?source=1  →  JSON { ok, server: { embed } }
  * ============================================================ */
 if (isset($_GET['source']) && $_GET['source'] === '1') {
     header('Content-Type: application/json; charset=utf-8');
@@ -101,7 +94,7 @@ if (isset($_GET['source']) && $_GET['source'] === '1') {
         echo json_encode(['ok' => false, 'error' => 'token_failed']); exit;
     }
 
-    $self  = strtok($_SERVER['REQUEST_URI'] ?? '/', '?');
+    $self = strtok($_SERVER['REQUEST_URI'] ?? '/', '?');
     echo json_encode([
         'ok'     => true,
         'server' => [
@@ -113,8 +106,8 @@ if (isset($_GET['source']) && $_GET['source'] === '1') {
 }
 
 /* ============================================================
- *  EMBED: ?embed=<token> — HTML do player interno
- *  O JW recebe "?go=<token>" — o PHP faz 302 para o mgeb
+ *  EMBED ?embed=<token>  →  HTML do player interno
+ *  O JW Player recebe "?go=<token>" e segue os 302 até o CDN
  * ============================================================ */
 if (isset($_GET['embed'])) {
     $token = (string)$_GET['embed'];
@@ -126,14 +119,13 @@ if (isset($_GET['embed'])) {
         exit;
     }
 
-    $self     = strtok($_SERVER['REQUEST_URI'] ?? '/', '?');
-    $goUrl    = $self . '?go=' . $token;     // URL "pública" que o JW vai usar
-    $label    = $entry['label']  ?? 'HD';
-    $poster   = $entry['poster'] ?? PLAYMOZ_POSTER_FALLBACK;
+    $self   = strtok($_SERVER['REQUEST_URI'] ?? '/', '?');
+    $goUrl  = $self . '?go=' . $token;   // JW usa isto → 302 → mgeb → 302 → CDN
+    $label  = $entry['label']  ?? 'HD';
+    $poster = $entry['poster'] ?? PLAYMOZ_POSTER_FALLBACK;
 
-    // JW recebe a URL "?go=" → 302 → HLS real. Tipo HLS forçado.
-    $urlJs    = json_encode($goUrl, JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_UNESCAPED_SLASHES);
-    $labelJs  = json_encode($label, JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT);
+    $urlJs    = json_encode($goUrl,  JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_UNESCAPED_SLASHES);
+    $labelJs  = json_encode($label,  JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT);
     $posterJs = json_encode($poster, JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_UNESCAPED_SLASHES);
 
     header('Content-Type: text/html; charset=utf-8');
@@ -145,7 +137,7 @@ if (isset($_GET['embed'])) {
 <html>
 <head>
 <script>
-/* Proteção anti-iframe sandbox */
+/* Proteção anti-iframe sandbox (mesma do original) */
 (function () {
   if (window.self === window.top) return;
   var sandboxFound = false;
@@ -230,7 +222,7 @@ function goBack(){
 
 <div style="background:#ff0000;padding:10px 20px;letter-spacing:1px;box-shadow:0 1px 15px #ff0000;color:#fff;font-family:'Open-Sans',sans-serif;margin:8px;border-radius:19px;font-weight:bold;font-size:11px;position:absolute;left:16px;z-index:9;cursor:pointer;" onclick="goBack()">Voltar</div>
 
-<!-- Download: usa o mesmo ?go= (302 para o arquivo real) -->
+<!-- Download: mesmo ?go=, segue os 302 até ao ficheiro real -->
 <div id="down" style="right:16px;">
   <div class="download">Espelhar/Baixar</div>
   <ul id="down-list" class="down-list">
@@ -270,7 +262,7 @@ player.setup({
   sources: [{
     file: <?= $urlJs ?>,
     label: <?= $labelJs ?>,
-    type: "hls",            /* mgeb .ts é HLS — força HLS sempre */
+    type: "hls",            /* mgeb .ts é HLS — o JW segue os 302 e toca */
     default: "false"
   }],
   aspectratio: "16:9",
