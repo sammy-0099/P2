@@ -1,5 +1,5 @@
 <?php
-/** PlayMoz Player — fonte única mgeb.space (.ts → HLS), URL resolvida no servidor. PHP 7.4+ */
+/** PlayMoz Player — fonte única mgeb.space (.ts → HLS/MP4), URL resolvida no servidor. PHP 7.4+ */
 
 /* ============================================================
  *  CONFIGURAÇÃO INTERNA — NUNCA EXPOR AO CLIENTE
@@ -61,38 +61,80 @@ function pm_mgeb_url(string $id): string {
 }
 
 /**
- * Resolve o 302 do mgeb e devolve a URL final do CDN (.m3u8?t=...).
- * Se falhar, devolve null (o embed cai para o ?go=<token>).
+ * Detecta o tipo de stream a partir da URL.
+ * m3u8 → hls | mpd → dash | mp4 → mp4 | webm → webm | flv → flv | ts → mp4 (fallback)
+ */
+function pm_stream_type(string $url): string {
+    $path = parse_url($url, PHP_URL_PATH) ?? '';
+    $ext  = strtolower(pathinfo($path, PATHINFO_EXTENSION));
+    switch ($ext) {
+        case 'm3u8': return 'hls';
+        case 'mpd':  return 'dash';
+        case 'mp4':
+        case 'm4v':  return 'mp4';
+        case 'webm': return 'webm';
+        case 'flv':  return 'flv';
+        case 'ts':   return 'mp4'; // .ts pode ser servido como mp4 progressivo
+        default:     return 'mp4';
+    }
+}
+
+/**
+ * Resolve o redirect do mgeb e devolve a URL final.
+ * Aceita redirects em cadeia (até 5 saltos), tanto 301/302/303/307/308.
+ * Se a URL final responder 200, devolve-a; senão devolve null.
  */
 function pm_resolve_cdn(string $mgebUrl): ?string {
     if (!function_exists('curl_init')) return null;
-    $ch = curl_init($mgebUrl);
-    curl_setopt_array($ch, [
-        CURLOPT_NOBODY         => true,
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_FOLLOWLOCATION => false,
-        CURLOPT_CONNECTTIMEOUT => 4,
-        CURLOPT_TIMEOUT        => 6,
-        CURLOPT_USERAGENT      => 'Mozilla/5.0 (Linux; Android 13)',
-        CURLOPT_REFERER        => MGEB_DOMAIN . '/',
-        CURLOPT_SSL_VERIFYPEER => true,
-    ]);
-    curl_exec($ch);
-    $status = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    $loc    = (string)curl_getinfo($ch, CURLINFO_REDIRECT_URL);
-    curl_close($ch);
 
-    if ($status >= 300 && $status < 400 && $loc !== '' && preg_match('~^https?://~i', $loc)) {
-        return $loc;
+    $current = $mgebUrl;
+    $maxHops = 5;
+
+    for ($hop = 0; $hop < $maxHops; $hop++) {
+        $ch = curl_init($current);
+        curl_setopt_array($ch, [
+            CURLOPT_NOBODY         => true,
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_FOLLOWLOCATION => false,
+            CURLOPT_CONNECTTIMEOUT => 4,
+            CURLOPT_TIMEOUT        => 8,
+            CURLOPT_USERAGENT      => 'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36',
+            CURLOPT_REFERER        => MGEB_DOMAIN . '/',
+            CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_SSL_VERIFYHOST => 2,
+        ]);
+        curl_exec($ch);
+        $status = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $loc    = (string)curl_getinfo($ch, CURLINFO_REDIRECT_URL);
+        $ctype  = (string)curl_getinfo($ch, CURLINFO_CONTENT_TYPE);
+        curl_close($ch);
+
+        // Redirect → segue
+        if ($status >= 300 && $status < 400 && $loc !== '' && preg_match('~^https?://~i', $loc)) {
+            $current = $loc;
+            continue;
+        }
+
+        // 200 OK → é a URL final reproduzível
+        if ($status === 200) {
+            // Se o Content-Type for HTML, provavelmente é uma página de erro → rejeita
+            if ($ctype && stripos($ctype, 'text/html') !== false) {
+                return null;
+            }
+            return $current;
+        }
+
+        // Outro status → falha
+        return null;
     }
-    // Se não houve redirect, talvez a própria URL já responda 200 (raro, mas possível)
-    if ($status === 200) return $mgebUrl;
-    return null;
+
+    // Demasiados redirects → devolve a última URL mesmo assim
+    return $current;
 }
 
 /* ============================================================
- *  ENDPOINT ?go=<token>  →  302 para mgeb.space/.../ID.ts
- *  (usado como FALLBACK se a resolução do CDN falhar)
+ *  ENDPOINT ?go=<token>  →  302 para a URL final (CDN ou mgeb)
+ *  Fallback caso a resolução no servidor falhe.
  * ============================================================ */
 if (isset($_GET['go'])) {
     $token = (string)$_GET['go'];
@@ -104,7 +146,7 @@ if (isset($_GET['go'])) {
         exit;
     }
     header('Cache-Control: private, no-store');
-    header('Referrer-Policy: strict-origin-when-cross-origin'); // <<< era no-referrer
+    header('Referrer-Policy: strict-origin-when-cross-origin');
     header('Location: ' . $entry['url'], true, 302);
     exit;
 }
@@ -142,8 +184,7 @@ if (isset($_GET['source']) && $_GET['source'] === '1') {
 
 /* ============================================================
  *  EMBED ?embed=<token>  →  HTML do player interno
- *  O PHP resolve o 302 do mgeb AGORA e entrega a URL final do CDN
- *  ao JW Player (type: hls) → toca direto, sem redirect no browser.
+ *  Resolve o redirect AGORA e entrega a URL final ao JW Player.
  * ============================================================ */
 if (isset($_GET['embed'])) {
     $token = (string)$_GET['embed'];
@@ -156,24 +197,28 @@ if (isset($_GET['embed'])) {
     }
 
     $self    = strtok($_SERVER['REQUEST_URI'] ?? '/', '?');
-    $goUrl   = $self . '?go=' . $token;             // fallback (302)
+    $goUrl   = $self . '?go=' . $token;
     $mgebUrl = (string)($entry['url'] ?? '');
 
-    // >>> RESOLVE O CDN AGORA (evita o JW quebrar no 302)
-    $cdnUrl = $mgebUrl ? pm_resolve_cdn($mgebUrl) : null;
-    $playUrl = $cdnUrl ?: $goUrl;                    // usa CDN; se falhar, ?go=
+    // Resolve redirects no servidor → URL final reproduzível
+    $cdnUrl  = $mgebUrl ? pm_resolve_cdn($mgebUrl) : null;
+    $playUrl = $cdnUrl ?: $goUrl;
+
+    // Detecta o tipo correto (hls/mp4/dash/etc.)
+    $playType = $cdnUrl ? pm_stream_type($cdnUrl) : 'mp4';
 
     $label   = $entry['label']  ?? 'HD';
     $poster  = $entry['poster'] ?? PLAYMOZ_POSTER_FALLBACK;
 
-    $urlJs    = json_encode($playUrl, JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_UNESCAPED_SLASHES);
-    $labelJs  = json_encode($label,   JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT);
-    $posterJs = json_encode($poster,  JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_UNESCAPED_SLASHES);
+    $urlJs    = json_encode($playUrl,  JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_UNESCAPED_SLASHES);
+    $typeJs   = json_encode($playType, JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT);
+    $labelJs  = json_encode($label,    JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT);
+    $posterJs = json_encode($poster,   JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_UNESCAPED_SLASHES);
 
     header('Content-Type: text/html; charset=utf-8');
     header('Cache-Control: private, no-store');
     header('X-Content-Type-Options: nosniff');
-    header('Referrer-Policy: strict-origin-when-cross-origin'); // <<< era no-referrer
+    header('Referrer-Policy: strict-origin-when-cross-origin');
     ?>
 <!DOCTYPE html>
 <html>
@@ -246,6 +291,12 @@ if (isset($_GET['embed'])) {
  #pm-err button:hover{border-color:#ff3333;background:linear-gradient(145deg,#2a1e22,#1c1518)}
  #pm-err button:active{transform:scale(.98)}
  #pm-err button.primary{border-color:rgba(255,0,0,.5);background:linear-gradient(145deg,#2c1a1c,#1a1012)}
+
+ #pm-loading{position:fixed;inset:0;background:#000;display:flex;align-items:center;justify-content:center;z-index:15;flex-direction:column;gap:14px;font-family:system-ui,sans-serif}
+ #pm-loading.off{display:none}
+ .pm-spin{width:48px;height:48px;border-radius:50%;border:3px solid rgba(255,255,255,.08);border-top-color:#ff0000;animation:spin .8s linear infinite}
+ @keyframes spin{to{transform:rotate(360deg)}}
+ #pm-loading span{color:#9aa1b0;font-size:13px;letter-spacing:.05em}
 </style>
 </head>
 <body>
@@ -265,12 +316,16 @@ function goBack(){
 
 <div style="background:#ff0000;padding:10px 20px;letter-spacing:1px;box-shadow:0 1px 15px #ff0000;color:#fff;font-family:'Open-Sans',sans-serif;margin:8px;border-radius:19px;font-weight:bold;font-size:11px;position:absolute;left:16px;z-index:9;cursor:pointer;" onclick="goBack()">Voltar</div>
 
-<!-- Download: usa a URL do CDN (ou ?go= como fallback) -->
 <div id="down" style="right:16px;">
   <div class="download">Espelhar/Baixar</div>
   <ul id="down-list" class="down-list">
     <li><a href="<?= htmlspecialchars($playUrl, ENT_QUOTES, 'UTF-8') ?>" target="_blank" rel="noopener noreferrer">Clique aqui</a></li>
   </ul>
+</div>
+
+<div id="pm-loading">
+  <div class="pm-spin"></div>
+  <span>A carregar vídeo...</span>
 </div>
 
 <div id="ani-player"></div>
@@ -293,11 +348,17 @@ function goBack(){
 function pmShowErr(){
   var el = document.getElementById('pm-err');
   if (el) el.classList.add('on');
+  var ld = document.getElementById('pm-loading');
+  if (ld) ld.classList.add('off');
   try { if (window.player && player.pause) player.pause(true); } catch(e){}
 }
 function pmHideErr(){
   var el = document.getElementById('pm-err');
   if (el) el.classList.remove('on');
+}
+function pmHideLoading(){
+  var el = document.getElementById('pm-loading');
+  if (el) el.classList.add('off');
 }
 
 var player = jwplayer("ani-player");
@@ -305,13 +366,13 @@ player.setup({
   sources: [{
     file: <?= $urlJs ?>,
     label: <?= $labelJs ?>,
-    type: "hls",            /* URL final já é .m3u8 do CDN → JW toca direto */
-    default: "false"
+    type: <?= $typeJs ?>,
+    default: "true"
   }],
   aspectratio: "16:9",
   startparam: "start",
   primary: "html5",
-  autostart: false,
+  autostart: true,
   mute: false,
   preload: "auto",
   image: <?= $posterJs ?>,
@@ -322,8 +383,10 @@ player.setup({
 
 player.on('error', pmShowErr);
 player.on('mediaError', pmShowErr);
-player.on('play', pmHideErr);
+player.on('play', function(){ pmHideErr(); pmHideLoading(); });
 player.on('buffer', pmHideErr);
+player.on('ready', pmHideLoading);
+player.on('loaded', pmHideLoading);
 
 player.addButton('<svg xmlns="http://www.w3.org/2000/svg" class="jw-svg-icon jw-svg-icon-rewind2" viewBox="0 0 240 240" focusable="false"><path d="m 25.993957,57.778 v 125.3 c 0.03604,2.63589 2.164107,4.76396 4.8,4.8 h 62.7 v -19.3 h -48.2 v -96.4 H 160.99396 v 19.3 c 0,5.3 3.6,7.2 8,4.3 l 41.8,-27.9 c 2.93574,-1.480087 4.13843,-5.04363 2.7,-8 -0.57502,-1.174985 -1.52502,-2.124979 -2.7,-2.7 l -41.8,-27.9 c -4.4,-2.9 -8,-1 -8,4.3 v 19.3 H 30.893957 c -2.689569,0.03972 -4.860275,2.210431 -4.9,4.9 z m 163.422413,73.04577 c -3.72072,-6.30626 -10.38421,-10.29683 -17.7,-10.6 -7.31579,0.30317 -13.97928,4.29374 -17.7,10.6 -8.60009,14.23525 -8.60009,32.06475 0,46.3 3.72072,6.30626 10.38421,10.29683 17.7,10.6 7.31579,-0.30317 13.97928,-4.29374 17.7,-10.6 8.60009,-14.23525 8.60009,-32.06475 0,-46.3 z m -17.7,47.2 c -7.8,0 -14.4,-11 -14.4,-24.1 0,-13.1 6.6,-24.1 14.4,-24.1 7.8,0 14.4,11 14.4,24.1 0,13.1 -6.5,24.1 -14.4,24.1 z m -47.77056,9.72863 v -51 l -4.8,4.8 -6.8,-6.8 13,-12.99999 c 3.02543,-3.03598 8.21053,-0.88605 8.2,3.4 v 62.69999 z"></path></svg>', "Avançar 10s", function () { player.seek(player.getPosition() + 10); }, "Avançar 10s");
 
@@ -348,8 +411,21 @@ if (!pm_is_id($id)) {
     exit;
 }
 
+// A tela principal apenas monta o iframe do player directamente.
+// Sem tela de "escolher servidor" — o player começa já a carregar.
 $self = strtok($_SERVER['REQUEST_URI'] ?? '/', '?');
 $base = $self . '?' . http_build_query(['type' => $type, 'id' => $id]);
+
+// Cria o token já na tela principal para o iframe carregar imediatamente
+$token = bin2hex(random_bytes(16));
+pm_store_put($token, [
+    'id'     => $id,
+    'url'    => pm_mgeb_url($id),
+    'label'  => 'HD',
+    'poster' => PLAYMOZ_POSTER_FALLBACK,
+]);
+
+$embedUrl = $self . '?embed=' . $token;
 ?>
 <!doctype html>
 <html lang="pt-BR">
@@ -360,221 +436,40 @@ $base = $self . '?' . http_build_query(['type' => $type, 'id' => $id]);
 <meta name="robots" content="noindex,nofollow">
 <title>PlayMoz · Player</title>
 <style>
-:root{color-scheme:dark;--red:#ff0000;--red-soft:#ff3333;--bg:#050609;--panel-1:#1a1d26;--panel-2:#0f1117;--border:#2a2e39;--muted:#9aa1b0}
+:root{color-scheme:dark;--red:#ff0000;--bg:#050609}
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-html,body{margin:0;padding:0;width:100%;height:100%;background:var(--bg);color:#fff;font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,"Open Sans",sans-serif;overflow:hidden}
-
-#pm-player-stage{position:fixed;inset:0;display:none;background:#000;z-index:9000}
-#pm-player-stage.on{display:block}
+html,body{margin:0;padding:0;width:100%;height:100%;background:var(--bg);overflow:hidden}
 #pm-frame{width:100%;height:100%;border:0;display:block;background:#000}
 
-#pm-screen{position:fixed;inset:0;z-index:10000;display:grid;place-items:center;padding:max(16px,env(safe-area-inset-top)) max(16px,env(safe-area-inset-right)) max(16px,env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left));background:radial-gradient(120% 80% at 50% 0%,#2a1418 0%,transparent 55%),radial-gradient(120% 80% at 50% 100%,#121620 0%,transparent 60%),var(--bg);transition:opacity .35s ease,visibility .35s ease}
-#pm-screen.off{opacity:0;visibility:hidden;pointer-events:none}
-
-.pm-modal{width:100%;max-width:380px;background:linear-gradient(160deg,var(--panel-1),var(--panel-2));border:1px solid var(--border);border-radius:22px;box-shadow:0 30px 90px rgba(0,0,0,.75),0 0 0 1px rgba(255,255,255,.03) inset;overflow:hidden;display:flex;flex-direction:column;max-height:calc(100dvh - 32px);animation:pmIn .4s cubic-bezier(.2,.9,.3,1.15)}
-@keyframes pmIn{from{opacity:0;transform:translateY(12px) scale(.97)}to{opacity:1;transform:none}}
-
-.pm-head{padding:20px 22px 16px;display:flex;align-items:center;gap:13px;border-bottom:1px solid rgba(255,255,255,.06)}
-.pm-logo{flex:0 0 44px;width:44px;height:44px;display:grid;place-items:center;border-radius:13px;background:linear-gradient(145deg,rgba(255,0,0,.22),rgba(255,0,0,.06));border:1px solid rgba(255,0,0,.35);color:#ff4d4d}
-.pm-logo svg{width:22px;height:22px}
-.pm-head-text{min-width:0}
-.pm-head-text small{display:block;font-size:10px;letter-spacing:.16em;font-weight:800;color:#ff5c5c;text-transform:uppercase;margin-bottom:2px}
-.pm-head-text h1{margin:0;font-size:16px;font-weight:700;line-height:1.2;overflow-wrap:anywhere}
-
-.pm-body{padding:24px 22px 22px;overflow-y:auto;overscroll-behavior:contain;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;min-height:180px}
-
-.pm-spin{width:50px;height:50px;border-radius:50%;border:3px solid rgba(255,255,255,.08);border-top-color:var(--red);animation:spin .8s linear infinite;margin:0 auto 16px;position:relative}
-.pm-spin::after{content:"";position:absolute;inset:6px;border-radius:50%;border:3px solid transparent;border-top-color:rgba(255,255,255,.22);animation:spin 1.4s linear infinite reverse}
+.pm-splash{position:fixed;inset:0;z-index:5;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:14px;background:#000;font-family:system-ui,sans-serif;transition:opacity .35s ease}
+.pm-splash.off{opacity:0;pointer-events:none}
+.pm-spin{width:48px;height:48px;border-radius:50%;border:3px solid rgba(255,255,255,.08);border-top-color:var(--red);animation:spin .8s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
-
-.pm-body h2{margin:0 0 8px;font-size:16px;font-weight:700}
-.pm-body p{margin:0;color:var(--muted);font-size:13px;line-height:1.55;max-width:280px}
-
-.pm-foot{padding:11px 20px 15px;border-top:1px solid rgba(255,255,255,.06);text-align:center;color:#7d8494;font-size:11px}
-.pm-foot:empty{display:none;border:0;padding:0}
-
-.pm-servers{display:flex;flex-direction:column;gap:10px;width:100%;margin-top:22px}
-.pm-server-btn{display:flex;align-items:center;gap:13px;width:100%;padding:14px 15px;border-radius:14px;background:linear-gradient(145deg,#202430,#161922);border:1px solid #333846;color:#fff;text-align:left;cursor:pointer;transition:transform .15s,border-color .2s,background .2s,box-shadow .2s;min-width:0;font-family:inherit;font-size:inherit}
-.pm-server-btn:hover,.pm-server-btn:focus-visible{border-color:var(--red-soft);background:linear-gradient(145deg,#2a1e22,#1c1518);box-shadow:0 8px 24px rgba(255,0,0,.15);outline:none}
-.pm-server-btn:active{transform:scale(.98)}
-.pm-server-btn.primary{border-color:rgba(255,0,0,.5);background:linear-gradient(145deg,#2c1a1c,#1a1012)}
-.pm-server-btn-icon{flex:0 0 42px;width:42px;height:42px;display:grid;place-items:center;border-radius:12px;background:linear-gradient(145deg,rgba(255,0,0,.22),rgba(255,0,0,.05));border:1px solid rgba(255,0,0,.3);color:#ff4d4d}
-.pm-server-btn-icon svg{width:19px;height:19px}
-.pm-server-btn-info{flex:1;min-width:0;overflow:hidden}
-.pm-server-btn-info strong{display:block;font-size:14.5px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.pm-server-btn-info small{display:block;margin-top:2px;font-size:11.5px;color:#9aa1b0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.pm-server-btn-arrow{flex:0 0 18px;color:#6b7280;display:grid;place-items:center;transition:transform .2s,color .2s}
-.pm-server-btn:hover .pm-server-btn-arrow{color:#ff4d4d;transform:translateX(3px)}
-.pm-server-btn-arrow svg{width:16px;height:16px}
-
-.pm-alert{width:60px;height:60px;border-radius:50%;display:grid;place-items:center;background:rgba(255,0,0,.12);border:1px solid rgba(255,0,0,.35);color:#ff4d4d;margin:0 auto 16px;animation:popIn .5s cubic-bezier(.2,.9,.3,1.5)}
-.pm-alert svg{width:28px;height:28px}
-@keyframes popIn{from{transform:scale(.4);opacity:0}to{transform:scale(1);opacity:1}}
-
-@media (max-width:380px){.pm-modal{border-radius:19px}.pm-head{padding:17px 18px 14px;gap:11px}.pm-logo{flex:0 0 40px;width:40px;height:40px;border-radius:11px}.pm-logo svg{width:20px;height:20px}.pm-head-text h1{font-size:15px}.pm-body{padding:20px 18px 18px;min-height:170px}.pm-body h2{font-size:15px}.pm-body p{font-size:12.5px}.pm-server-btn{padding:12px 13px}.pm-server-btn-icon{flex:0 0 38px;width:38px;height:38px}.pm-server-btn-info strong{font-size:13.5px}.pm-server-btn-info small{font-size:11px}}
+.pm-splash span{color:#9aa1b0;font-size:13px;letter-spacing:.05em}
 </style>
 </head>
 <body>
 
-<div id="pm-player-stage" aria-hidden="true">
-  <iframe id="pm-frame" allow="autoplay; encrypted-media; fullscreen; picture-in-picture" referrerpolicy="strict-origin-when-cross-origin"></iframe>
+<div class="pm-splash" id="pm-splash">
+  <div class="pm-spin"></div>
+  <span>A carregar player...</span>
 </div>
 
-<div id="pm-screen" role="dialog" aria-modal="true" aria-labelledby="pm-heading">
-  <section class="pm-modal">
-    <header class="pm-head">
-      <div class="pm-logo">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <rect x="3" y="3" width="18" height="18" rx="5"/>
-          <path d="m10 8 6 4-6 4V8Z"/>
-        </svg>
-      </div>
-      <div class="pm-head-text">
-        <small>PLAYMOZ · REPRODUÇÃO</small>
-        <h1 id="pm-heading">A carregar fonte...</h1>
-      </div>
-    </header>
-
-    <div class="pm-body" id="pm-content">
-      <div class="pm-spin"></div>
-      <h2>A preparar o vídeo</h2>
-      <p>Estamos a preparar a experiência de reprodução.</p>
-    </div>
-
-    <footer class="pm-foot" id="pm-foot">Aguarda um momento...</footer>
-  </section>
-</div>
+<iframe id="pm-frame"
+        src="<?= htmlspecialchars($embedUrl, ENT_QUOTES, 'UTF-8') ?>"
+        allow="autoplay; encrypted-media; fullscreen; picture-in-picture"
+        referrerpolicy="strict-origin-when-cross-origin"></iframe>
 
 <script>
-'use strict';
-const PM_BASE = <?= json_encode($base, JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT) ?>;
-const PM_ID   = <?= (int)$id ?>;
-const PM_TYPE = <?= json_encode($type) ?>;
-
-const pmEl = id => document.getElementById(id);
-const ICONS = {
-  play:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 5 11 7-11 7V5Z"/></svg>',
-  arrow: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>',
-  alert: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg>'
-};
-
-function pmModal(title, html, foot) {
-  pmEl('pm-heading').textContent = title;
-  pmEl('pm-content').innerHTML = html;
-  pmEl('pm-foot').textContent = foot || '';
-  pmEl('pm-screen').classList.remove('off');
-}
-function pmLoading() {
-  pmModal('A preparar a reprodução',
-    '<div class="pm-spin"></div><h2>A estabelecer ligação segura</h2><p>Estamos a verificar a disponibilidade do vídeo.</p>',
-    'A ligação pode demorar alguns instantes.');
-}
-function pmValidUrl(u) {
-  try { const x = new URL(u, location.href); return x.protocol === 'https:' || x.protocol === 'http:'; }
-  catch { return false; }
-}
-function pmOpenInFrame(url) {
-  const stage = pmEl('pm-player-stage');
-  const frame = pmEl('pm-frame');
-  pmEl('pm-screen').classList.add('off');
-  stage.classList.add('on');
-  stage.setAttribute('aria-hidden','false');
-  setTimeout(() => { frame.src = url; }, 30);
-}
-function pmCloseFrame() {
-  const stage = pmEl('pm-player-stage');
-  const frame = pmEl('pm-frame');
-  stage.classList.remove('on');
-  stage.setAttribute('aria-hidden','true');
-  frame.src = 'about:blank';
-  pmShowServers();
-}
-
-let pmOpening = false;
-function pmShowServers() {
-  pmOpening = false;
-  pmModal('Selecione o servidor',
-    '<h2>Pronto para assistir</h2><div class="pm-servers">'+
-      '<button class="pm-server-btn primary" type="button" id="pm-s1">'+
-        '<span class="pm-server-btn-icon">'+ICONS.play+'</span>'+
-        '<span class="pm-server-btn-info"><strong>Servidor 1</strong><small>Reprodução directa · HD</small></span>'+
-        '<span class="pm-server-btn-arrow">'+ICONS.arrow+'</span>'+
-      '</button>'+
-    '</div>',
-    'Escolha o servidor para iniciar a reprodução.');
-  pmEl('pm-s1').onclick = () => pmLoadSource();
-}
-
-function pmErrorSource(message) {
-  pmOpening = false;
-  pmShowServers();
-  pmEl('pm-foot').textContent = message || 'Não conseguimos estabelecer ligação. Tenta novamente.';
-}
-
-async function pmLoadSource() {
-  if (pmOpening) return;
-  pmOpening = true;
-  pmLoading();
-  try {
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 28000);
-    let response;
-    try {
-      response = await fetch(new URL(PM_BASE + '&source=1', window.location.href).href, {
-        cache: 'no-store',
-        credentials: 'same-origin',
-        signal: ctrl.signal,
-      });
-    } finally { clearTimeout(timer); }
-
-    const data = await response.json().catch(() => {
-      throw new Error('O servidor não devolveu uma resposta JSON válida (HTTP ' + response.status + ').');
-    });
-
-    const embed = data && data.server && data.server.embed;
-    if (!response.ok || !data.ok || !embed || !pmValidUrl(embed)) {
-      throw new Error((data && data.error) || 'Fonte indisponível');
-    }
-
-    pmOpenInFrame(embed);
-    pmOpening = false;
-  } catch (e) {
-    pmErrorSource(
-      e.name === 'AbortError' ? 'A ligação demorou demasiado. Tenta novamente.'
-      : (e.message === 'Failed to fetch' ? 'Falha de rede ou pedido bloqueado.'
-      : (e.message || 'Não foi possível iniciar o vídeo.'))
-    );
-  }
-}
-
-function pmScan() {
-  if (!PM_ID) {
-    pmModal('ID em falta', '<div class="pm-alert">'+ICONS.alert+'</div><h2>Indica o ID do filme</h2>', '');
-    return;
-  }
-  pmShowServers();
-}
-
-window.addEventListener('message', (ev) => {
-  if (ev && ev.data && ev.data.type === 'playmoz-close') {
-    pmCloseFrame();
-  }
-});
-
-document.addEventListener('keydown', e => {
-  if (e.key === 'Escape' && pmEl('pm-player-stage').classList.contains('on')) {
-    pmCloseFrame();
-  }
-});
-
-document.addEventListener('DOMContentLoaded', pmScan);
+// Esconde o splash quando o iframe carregar
+(function(){
+  var f = document.getElementById('pm-frame');
+  var s = document.getElementById('pm-splash');
+  var hide = function(){ if (s) s.classList.add('off'); };
+  f.addEventListener('load', function(){ setTimeout(hide, 300); });
+  // fallback: esconde após 8s mesmo sem load
+  setTimeout(hide, 8000);
+})();
 </script>
-<?php
-$pmRefHost = strtolower((string)(parse_url($_SERVER["HTTP_REFERER"] ?? "", PHP_URL_HOST) ?: ""));
-$pmOwnHost = strtolower((string)($_SERVER["HTTP_HOST"] ?? ""));
-$pmNoClickAds = in_array($pmRefHost, ["playmoz.xyz", "golplay.site"], true) || in_array($pmOwnHost, ["playmoz.xyz", "golplay.site"], true);
-if (!$pmNoClickAds):
-?>
-<?php endif; ?>
 </body>
 </html>
