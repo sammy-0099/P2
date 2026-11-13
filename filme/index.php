@@ -1,8 +1,8 @@
 <?php
-/** PlayMoz Player — proxy mgeb.space/{ID}.mp4 com credenciais ocultas. PHP 7.4+ */
+/** PlayMoz Player — URL directa mgeb.space, sem proxy. PHP 7.4+ */
 
 /* ============================================================
- *  CONFIGURAÇÃO (nunca exposta ao cliente)
+ *  CONFIGURAÇÃO (nunca exposta em páginas públicas)
  * ============================================================ */
 define('MGEB_DOMAIN', 'https://mgeb.space');
 define('MGEB_USER',   'Feljo');
@@ -46,79 +46,10 @@ function pm_is_id(string $id): bool {
     return (bool)preg_match('/^[0-9]{1,12}$/', $id);
 }
 
-/** URL REAL no mgeb (só o PHP conhece). */
-function pm_mgeb_url(string $id): string {
-    return MGEB_DOMAIN . '/movie/' . rawurlencode(MGEB_USER) . '/' . rawurlencode(MGEB_PASS) . '/' . rawurlencode($id) . '.mp4';
-}
-
-/* ============================================================
- *  PROXY DE STREAM  ?p=<token>
- *  O browser vê apenas o teu domínio — user/pass ficam ocultos.
- *  Suporta Range (206) para seek/streaming progressivo.
- * ============================================================ */
-if (isset($_GET['p'])) {
-    $token = (string)$_GET['p'];
-    $entry = pm_store_get($token);
-    if (!is_array($entry) || empty($entry['url'])) {
-        http_response_code(404);
-        header('Content-Type: text/plain; charset=utf-8');
-        echo 'Fonte indisponível';
-        exit;
-    }
-
-    $src   = (string)$entry['url'];
-    $range = $_SERVER['HTTP_RANGE'] ?? '';
-
-    $headers = [
-        'User-Agent: Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36',
-        'Referer: ' . MGEB_DOMAIN . '/',
-        'Accept: */*',
-    ];
-    if ($range !== '') $headers[] = 'Range: ' . $range;
-
-    $ch = curl_init($src);
-    curl_setopt_array($ch, [
-        CURLOPT_RETURNTRANSFER => false,
-        CURLOPT_FOLLOWLOCATION => true,
-        CURLOPT_MAXREDIRS      => 8,
-        CURLOPT_CONNECTTIMEOUT => 8,
-        CURLOPT_TIMEOUT        => 0, // streaming
-        CURLOPT_HTTPHEADER     => $headers,
-        CURLOPT_USERAGENT      => 'Mozilla/5.0 (Linux; Android 13)',
-        CURLOPT_REFERER        => MGEB_DOMAIN . '/',
-        CURLOPT_SSL_VERIFYPEER => false,
-        CURLOPT_SSL_VERIFYHOST => 0,
-        CURLOPT_HEADERFUNCTION => function ($ch, $line) {
-            $len  = strlen($line);
-            $trim = trim($line);
-            if ($trim === '') return $len;
-
-            // Repassa cabeçalhos relevantes, ignora hop-by-hop
-            $low = strtolower($trim);
-            if (stripos($trim, 'HTTP/') === 0)          { @header($trim, true); return $len; }
-            if (strpos($low, 'transfer-encoding:') === 0) return $len;
-            if (strpos($low, 'connection:') === 0)        return $len;
-            if (strpos($low, 'keep-alive:') === 0)        return $len;
-            @header($trim);
-            return $len;
-        },
-        CURLOPT_WRITEFUNCTION  => function ($ch, $data) {
-            echo $data;
-            @flush();
-            return strlen($data);
-        },
-    ]);
-
-    // CORS + caching
-    header('Access-Control-Allow-Origin: *');
-    header('Access-Control-Allow-Headers: Range');
-    header('Access-Control-Expose-Headers: Content-Length, Content-Range, Accept-Ranges');
-    header('Cache-Control: private, max-age=600');
-    header('X-Content-Type-Options: nosniff');
-
-    curl_exec($ch);
-    curl_close($ch);
-    exit;
+/** URL real do mgeb — calculada no PHP, entregue só dentro do embed. */
+function pm_mgeb_url(string $id, string $type): string {
+    $seg = ($type === 'tv') ? 'series' : 'movie';
+    return MGEB_DOMAIN . '/' . $seg . '/' . rawurlencode(MGEB_USER) . '/' . rawurlencode(MGEB_PASS) . '/' . rawurlencode($id) . '.mp4';
 }
 
 /* ============================================================
@@ -128,13 +59,14 @@ if (isset($_GET['source']) && $_GET['source'] === '1') {
     header('Content-Type: application/json; charset=utf-8');
     header('Cache-Control: no-store');
 
-    $id = (string)($_GET['id'] ?? '');
+    $id   = (string)($_GET['id'] ?? '');
+    $type = in_array($_GET['type'] ?? 'movie', ['movie', 'tv'], true) ? $_GET['type'] : 'movie';
     if (!pm_is_id($id)) { echo json_encode(['ok' => false, 'error' => 'id_required']); exit; }
 
     $token = bin2hex(random_bytes(16));
     if (!pm_store_put($token, [
         'id'     => $id,
-        'url'    => pm_mgeb_url($id),
+        'type'   => $type,
         'label'  => 'HD',
         'poster' => PLAYMOZ_POSTER_FALLBACK,
     ])) {
@@ -154,32 +86,26 @@ if (isset($_GET['source']) && $_GET['source'] === '1') {
 
 /* ============================================================
  *  EMBED ?embed=<token>  →  HTML do player
- *  O <source> aponta para ?p=<token> (proxy) — nunca ao mgeb.
+ *  O PHP calcula a URL do mgeb AGORA e entrega-a no <script>.
+ *  Sem proxy, sem redirect — o browser toca directo.
  * ============================================================ */
 if (isset($_GET['embed'])) {
     $token = (string)$_GET['embed'];
     $entry = pm_store_get($token);
-    if (!is_array($entry) || empty($entry['url'])) {
+    if (!is_array($entry)) {
         http_response_code(404);
         header('Content-Type: text/html; charset=utf-8');
         echo '<!doctype html><html><body style="background:#000;color:#fff;font-family:sans-serif;display:grid;place-items:center;height:100vh;margin:0"><p>Fonte indisponível</p></body></html>';
         exit;
     }
 
-    $self    = strtok($_SERVER['REQUEST_URI'] ?? '/', '?');
-    $label   = $entry['label']  ?? 'HD';
-    $poster  = $entry['poster'] ?? PLAYMOZ_POSTER_FALLBACK;
+    $id      = (string)($entry['id']   ?? '');
+    $type    = (string)($entry['type'] ?? 'movie');
+    $label   = (string)($entry['label']  ?? 'HD');
+    $poster  = (string)($entry['poster'] ?? PLAYMOZ_POSTER_FALLBACK);
 
-    // Cria token separado para o proxy (não reutiliza o do embed)
-    $proxyToken = bin2hex(random_bytes(16));
-    pm_store_put($proxyToken, [
-        'id'     => $entry['id'] ?? '',
-        'url'    => $entry['url'],
-        'label'  => $label,
-        'poster' => $poster,
-    ]);
-
-    $playUrl  = $self . '?p=' . $proxyToken;
+    // >>> URL calculada aqui; nunca aparece noutro endpoint público.
+    $playUrl  = pm_mgeb_url($id, $type);
     $playType = 'mp4';
 
     $urlJs    = json_encode($playUrl,  JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_UNESCAPED_SLASHES);
@@ -379,12 +305,11 @@ if (!pm_is_id($id)) {
 }
 
 $self = strtok($_SERVER['REQUEST_URI'] ?? '/', '?');
-$base = $self . '?' . http_build_query(['type' => $type, 'id' => $id]);
 
 $token = bin2hex(random_bytes(16));
 pm_store_put($token, [
     'id'     => $id,
-    'url'    => pm_mgeb_url($id),
+    'type'   => $type,
     'label'  => 'HD',
     'poster' => PLAYMOZ_POSTER_FALLBACK,
 ]);
