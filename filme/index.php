@@ -2,7 +2,7 @@
 /** PlayMoz Player — fonte única mgeb.space (.ts → HLS/MP4), URL resolvida no servidor. PHP 7.4+ */
 
 /* ============================================================
- *  CONFIGURAÇÃO INTERNA — NUNCA EXPOR AO CLIENTE
+ *  CONFIGURAÇÃO INTERNA
  * ============================================================ */
 define('MGEB_DOMAIN', 'https://mgeb.space');
 define('MGEB_USER',   'Feljo');
@@ -13,10 +13,10 @@ define('PLAYMOZ_SITE', 'https://playmoz.xyz');
 define('PLAYMOZ_POSTER_FALLBACK', 'https://i.imgur.com/XB5B8Md.jpeg');
 
 define('STREAM_DIR', sys_get_temp_dir() . '/pm_streams');
-define('STREAM_TTL', 1800); // 30 min
+define('STREAM_TTL', 1800);
 
 /* ============================================================
- *  TOKEN STORE (ficheiro, sem cookies)
+ *  TOKEN STORE
  * ============================================================ */
 function pm_store_init(): void {
     if (!is_dir(STREAM_DIR)) @mkdir(STREAM_DIR, 0700, true);
@@ -41,54 +41,48 @@ function pm_store_get(string $token): ?array {
     if (($data['expires'] ?? 0) < time()) { @unlink($file); return null; }
     return $data;
 }
-function pm_store_gc(): void {
-    if (random_int(1, 100) !== 1) return;
-    pm_store_init();
-    foreach ((array)@glob(STREAM_DIR . '/*.json') as $f) {
-        $raw = @file_get_contents($f);
-        $d = $raw ? json_decode($raw, true) : null;
-        if (!is_array($d) || ($d['expires'] ?? 0) < time()) @unlink($f);
-    }
-}
 
 function pm_is_id(string $id): bool {
     return (bool)preg_match('/^[0-9]{1,12}$/', $id);
 }
 
-/** URL REAL do mgeb — só o PHP conhece. */
 function pm_mgeb_url(string $id): string {
     return MGEB_DOMAIN . '/movie/' . rawurlencode(MGEB_USER) . '/' . rawurlencode(MGEB_PASS) . '/' . rawurlencode($id) . '.ts';
 }
 
 /**
- * Detecta o tipo de stream a partir da URL.
- * m3u8 → hls | mpd → dash | mp4 → mp4 | webm → webm | flv → flv | ts → mp4 (fallback)
+ * Detecta o tipo de stream pela URL + Content-Type.
  */
-function pm_stream_type(string $url): string {
+function pm_stream_type(string $url, string $ctype = ''): string {
+    $ctype = strtolower($ctype);
+    if (strpos($ctype, 'mpegurl') !== false) return 'hls';
+    if (strpos($ctype, 'dash+xml') !== false) return 'dash';
+
     $path = parse_url($url, PHP_URL_PATH) ?? '';
     $ext  = strtolower(pathinfo($path, PATHINFO_EXTENSION));
     switch ($ext) {
         case 'm3u8': return 'hls';
         case 'mpd':  return 'dash';
-        case 'mp4':
-        case 'm4v':  return 'mp4';
         case 'webm': return 'webm';
         case 'flv':  return 'flv';
-        case 'ts':   return 'mp4'; // .ts pode ser servido como mp4 progressivo
+        case 'ts':   return 'mp4'; // .ts servido como progressivo
+        case 'mp4':
+        case 'm4v':
         default:     return 'mp4';
     }
 }
 
 /**
- * Resolve o redirect do mgeb e devolve a URL final.
- * Aceita redirects em cadeia (até 5 saltos), tanto 301/302/303/307/308.
- * Se a URL final responder 200, devolve-a; senão devolve null.
+ * Resolve a cadeia de redirects (segue 301/302/303/307/308).
+ * Devolve ['url' => final, 'type' => 'mp4'|'hls'|..., 'ok' => bool]
+ * Se não conseguir resolver, devolve ok=false e url = original.
  */
-function pm_resolve_cdn(string $mgebUrl): ?string {
-    if (!function_exists('curl_init')) return null;
+function pm_resolve_cdn(string $startUrl): array {
+    $fallback = ['url' => $startUrl, 'type' => 'mp4', 'ok' => false];
+    if (!function_exists('curl_init')) return $fallback;
 
-    $current = $mgebUrl;
-    $maxHops = 5;
+    $current = $startUrl;
+    $maxHops = 8;
 
     for ($hop = 0; $hop < $maxHops; $hop++) {
         $ch = curl_init($current);
@@ -96,45 +90,92 @@ function pm_resolve_cdn(string $mgebUrl): ?string {
             CURLOPT_NOBODY         => true,
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_FOLLOWLOCATION => false,
-            CURLOPT_CONNECTTIMEOUT => 4,
-            CURLOPT_TIMEOUT        => 8,
+            CURLOPT_CONNECTTIMEOUT => 5,
+            CURLOPT_TIMEOUT        => 10,
             CURLOPT_USERAGENT      => 'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36',
             CURLOPT_REFERER        => MGEB_DOMAIN . '/',
             CURLOPT_SSL_VERIFYPEER => true,
             CURLOPT_SSL_VERIFYHOST => 2,
+            CURLOPT_HTTPHEADER     => [
+                'Accept: */*',
+                'Accept-Language: pt-BR,pt;q=0.9,en;q=0.8',
+            ],
         ]);
         curl_exec($ch);
         $status = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
         $loc    = (string)curl_getinfo($ch, CURLINFO_REDIRECT_URL);
         $ctype  = (string)curl_getinfo($ch, CURLINFO_CONTENT_TYPE);
+        $effUrl = (string)curl_getinfo($ch, CURLINFO_EFFECTIVE_URL);
         curl_close($ch);
 
-        // Redirect → segue
-        if ($status >= 300 && $status < 400 && $loc !== '' && preg_match('~^https?://~i', $loc)) {
+        // Segue redirect
+        if ($status >= 300 && $status < 400 && $loc !== '') {
+            if (!preg_match('~^https?://~i', $loc)) {
+                // Location relativo → resolve contra a URL actual
+                $parts = parse_url($current);
+                if (!$parts || empty($parts['scheme']) || empty($parts['host'])) return $fallback;
+                $base = $parts['scheme'] . '://' . $parts['host'] . (isset($parts['port']) ? ':'.$parts['port'] : '');
+                if ($loc[0] === '/') {
+                    $loc = $base . $loc;
+                } else {
+                    $dir = rtrim(dirname($parts['path'] ?? '/'), '/');
+                    $loc = $base . $dir . '/' . $loc;
+                }
+            }
             $current = $loc;
             continue;
         }
 
-        // 200 OK → é a URL final reproduzível
+        // 200 OK → URL final
         if ($status === 200) {
-            // Se o Content-Type for HTML, provavelmente é uma página de erro → rejeita
-            if ($ctype && stripos($ctype, 'text/html') !== false) {
-                return null;
+            $lowerCtype = strtolower($ctype);
+            // Rejeita páginas HTML de erro
+            if (strpos($lowerCtype, 'text/html') !== false) {
+                return $fallback;
             }
-            return $current;
+            $finalUrl = $effUrl !== '' ? $effUrl : $current;
+            $type     = pm_stream_type($finalUrl, $ctype);
+            return ['url' => $finalUrl, 'type' => $type, 'ok' => true];
         }
 
-        // Outro status → falha
-        return null;
+        // Outros status (403, 404, 405 por HEAD bloqueado, etc.)
+        // Tenta GET com Range para ver se realmente serve vídeo
+        if ($status === 403 || $status === 405 || $status === 400) {
+            $ch2 = curl_init($current);
+            curl_setopt_array($ch2, [
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_FOLLOWLOCATION => false,
+                CURLOPT_CONNECTTIMEOUT => 5,
+                CURLOPT_TIMEOUT        => 10,
+                CURLOPT_NOBODY         => false,
+                CURLOPT_RANGE          => '0-1023',
+                CURLOPT_USERAGENT      => 'Mozilla/5.0 (Linux; Android 13)',
+                CURLOPT_REFERER        => MGEB_DOMAIN . '/',
+                CURLOPT_SSL_VERIFYPEER => true,
+            ]);
+            curl_exec($ch2);
+            $st2    = (int)curl_getinfo($ch2, CURLINFO_HTTP_CODE);
+            $ct2    = (string)curl_getinfo($ch2, CURLINFO_CONTENT_TYPE);
+            $eff2   = (string)curl_getinfo($ch2, CURLINFO_EFFECTIVE_URL);
+            curl_close($ch2);
+            if ($st2 === 200 || $st2 === 206) {
+                $finalUrl = $eff2 !== '' ? $eff2 : $current;
+                $type     = pm_stream_type($finalUrl, $ct2);
+                return ['url' => $finalUrl, 'type' => $type, 'ok' => true];
+            }
+        }
+
+        return $fallback;
     }
 
-    // Demasiados redirects → devolve a última URL mesmo assim
-    return $current;
+    // Estourou o número de saltos → devolve a última
+    return ['url' => $current, 'type' => pm_stream_type($current), 'ok' => true];
 }
 
 /* ============================================================
- *  ENDPOINT ?go=<token>  →  302 para a URL final (CDN ou mgeb)
- *  Fallback caso a resolução no servidor falhe.
+ *  ENDPOINT ?go=<token>
+ *  Resolve o redirect NO SERVIDOR e responde com a URL final.
+ *  Se não resolver, devolve 302 para a URL original (JW segue).
  * ============================================================ */
 if (isset($_GET['go'])) {
     $token = (string)$_GET['go'];
@@ -145,14 +186,18 @@ if (isset($_GET['go'])) {
         echo 'Fonte indisponível';
         exit;
     }
+
+    $resolved = pm_resolve_cdn($entry['url']);
+    $target   = $resolved['url'] ?? $entry['url'];
+
     header('Cache-Control: private, no-store');
     header('Referrer-Policy: strict-origin-when-cross-origin');
-    header('Location: ' . $entry['url'], true, 302);
+    header('Location: ' . $target, true, 302);
     exit;
 }
 
 /* ============================================================
- *  API ?source=1  →  JSON { ok, server: { embed } }
+ *  API ?source=1
  * ============================================================ */
 if (isset($_GET['source']) && $_GET['source'] === '1') {
     header('Content-Type: application/json; charset=utf-8');
@@ -183,8 +228,7 @@ if (isset($_GET['source']) && $_GET['source'] === '1') {
 }
 
 /* ============================================================
- *  EMBED ?embed=<token>  →  HTML do player interno
- *  Resolve o redirect AGORA e entrega a URL final ao JW Player.
+ *  EMBED ?embed=<token>  →  HTML do player
  * ============================================================ */
 if (isset($_GET['embed'])) {
     $token = (string)$_GET['embed'];
@@ -200,20 +244,26 @@ if (isset($_GET['embed'])) {
     $goUrl   = $self . '?go=' . $token;
     $mgebUrl = (string)($entry['url'] ?? '');
 
-    // Resolve redirects no servidor → URL final reproduzível
-    $cdnUrl  = $mgebUrl ? pm_resolve_cdn($mgebUrl) : null;
-    $playUrl = $cdnUrl ?: $goUrl;
+    // Resolve redirects NO SERVIDOR → URL final + tipo detectado
+    $resolved = $mgebUrl ? pm_resolve_cdn($mgebUrl) : ['url' => $mgebUrl, 'type' => 'mp4', 'ok' => false];
 
-    // Detecta o tipo correto (hls/mp4/dash/etc.)
-    $playType = $cdnUrl ? pm_stream_type($cdnUrl) : 'mp4';
+    // URL primária: se resolveu, usa URL final; senão usa ?go= (JW segue 302)
+    $playUrl  = $resolved['ok'] ? $resolved['url'] : $goUrl;
+    $playType = $resolved['ok'] ? $resolved['type'] : 'mp4';
+
+    // URL de fallback (sempre ?go=) para o JS tentar de novo em caso de erro
+    $fallbackUrl  = $goUrl;
+    $fallbackType = 'mp4';
 
     $label   = $entry['label']  ?? 'HD';
     $poster  = $entry['poster'] ?? PLAYMOZ_POSTER_FALLBACK;
 
-    $urlJs    = json_encode($playUrl,  JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_UNESCAPED_SLASHES);
-    $typeJs   = json_encode($playType, JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT);
-    $labelJs  = json_encode($label,    JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT);
-    $posterJs = json_encode($poster,   JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_UNESCAPED_SLASHES);
+    $urlJs         = json_encode($playUrl,     JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_UNESCAPED_SLASHES);
+    $typeJs        = json_encode($playType,    JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT);
+    $fallbackJs    = json_encode($fallbackUrl, JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_UNESCAPED_SLASHES);
+    $fallbackTypeJs= json_encode($fallbackType,JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT);
+    $labelJs       = json_encode($label,       JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT);
+    $posterJs      = json_encode($poster,      JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_UNESCAPED_SLASHES);
 
     header('Content-Type: text/html; charset=utf-8');
     header('Cache-Control: private, no-store');
@@ -224,7 +274,6 @@ if (isset($_GET['embed'])) {
 <html>
 <head>
 <script>
-/* Proteção anti-iframe sandbox */
 (function () {
   if (window.self === window.top) return;
   var sandboxFound = false;
@@ -345,6 +394,11 @@ function goBack(){
 </div>
 
 <script>
+var PM_PRIMARY  = { url: <?= $urlJs ?>, type: <?= $typeJs ?> };
+var PM_FALLBACK = { url: <?= $fallbackJs ?>, type: <?= $fallbackTypeJs ?> };
+var PM_POSTER   = <?= $posterJs ?>;
+var PM_LABEL    = <?= $labelJs ?>;
+
 function pmShowErr(){
   var el = document.getElementById('pm-err');
   if (el) el.classList.add('on');
@@ -362,26 +416,41 @@ function pmHideLoading(){
 }
 
 var player = jwplayer("ani-player");
-player.setup({
-  sources: [{
-    file: <?= $urlJs ?>,
-    label: <?= $labelJs ?>,
-    type: <?= $typeJs ?>,
-    default: "true"
-  }],
-  aspectratio: "16:9",
-  startparam: "start",
-  primary: "html5",
-  autostart: true,
-  mute: false,
-  preload: "auto",
-  image: <?= $posterJs ?>,
-  playbackRateControls: [0.5, 0.75, 1, 1.25, 1.5, 2],
-  debug: false,
-  cast: {},
-});
 
-player.on('error', pmShowErr);
+var triedFallback = false;
+
+function pmSetup(src) {
+  player.setup({
+    sources: [{
+      file: src.url,
+      label: PM_LABEL,
+      type: src.type,
+      default: "true"
+    }],
+    aspectratio: "16:9",
+    startparam: "start",
+    primary: "html5",
+    autostart: true,
+    mute: false,
+    preload: "auto",
+    image: PM_POSTER,
+    playbackRateControls: [0.5, 0.75, 1, 1.25, 1.5, 2],
+    debug: false,
+    cast: {},
+  });
+}
+
+pmSetup(PM_PRIMARY);
+
+player.on('error', function(ev){
+  if (!triedFallback && PM_FALLBACK.url && PM_FALLBACK.url !== PM_PRIMARY.url) {
+    triedFallback = true;
+    try { player.stop(); } catch(e){}
+    pmSetup(PM_FALLBACK);
+    return;
+  }
+  pmShowErr();
+});
 player.on('mediaError', pmShowErr);
 player.on('play', function(){ pmHideErr(); pmHideLoading(); });
 player.on('buffer', pmHideErr);
@@ -411,12 +480,9 @@ if (!pm_is_id($id)) {
     exit;
 }
 
-// A tela principal apenas monta o iframe do player directamente.
-// Sem tela de "escolher servidor" — o player começa já a carregar.
 $self = strtok($_SERVER['REQUEST_URI'] ?? '/', '?');
 $base = $self . '?' . http_build_query(['type' => $type, 'id' => $id]);
 
-// Cria o token já na tela principal para o iframe carregar imediatamente
 $token = bin2hex(random_bytes(16));
 pm_store_put($token, [
     'id'     => $id,
@@ -461,13 +527,11 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:var(--bg);overflo
         referrerpolicy="strict-origin-when-cross-origin"></iframe>
 
 <script>
-// Esconde o splash quando o iframe carregar
 (function(){
   var f = document.getElementById('pm-frame');
   var s = document.getElementById('pm-splash');
   var hide = function(){ if (s) s.classList.add('off'); };
   f.addEventListener('load', function(){ setTimeout(hide, 300); });
-  // fallback: esconde após 8s mesmo sem load
   setTimeout(hide, 8000);
 })();
 </script>
