@@ -1,6 +1,9 @@
 <?php
-/** PlayMoz Player — URL directa mgeb.space, sem proxy. PHP 7.4+ */
+/** PlayMoz Player — URL directa mgeb.space no JW Player. Sem probe, sem proxy, sem redirect. PHP 7.4+ */
 
+/* ============================================================
+ *  CONFIGURAÇÃO (credenciais só no PHP)
+ * ============================================================ */
 define('MGEB_DOMAIN', 'https://mgeb.space');
 define('MGEB_USER',   'Feljo');
 define('MGEB_PASS',   '22109f3c5de3aa6c');
@@ -43,54 +46,10 @@ function pm_is_id(string $id): bool {
     return (bool)preg_match('/^[0-9]{1,12}$/', $id);
 }
 
+/** URL real do mgeb — calculada aqui, entregue ao JW Player. */
 function pm_mgeb_url(string $id, string $type): string {
     $seg = ($type === 'tv') ? 'series' : 'movie';
     return MGEB_DOMAIN . '/' . $seg . '/' . rawurlencode(MGEB_USER) . '/' . rawurlencode(MGEB_PASS) . '/' . rawurlencode($id) . '.mp4';
-}
-
-/**
- * Sonda os primeiros 1 KB do stream para descobrir o tipo REAL.
- * Não é proxy — só lê os bytes de cabeçalho e descarta.
- * Devolve: 'hls' | 'mp4' | 'dash' | 'webm'
- */
-function pm_detect_stream_type(string $url): string {
-    if (!function_exists('curl_init')) return 'hls';
-
-    $ch = curl_init($url);
-    curl_setopt_array($ch, [
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_FOLLOWLOCATION => true,
-        CURLOPT_MAXREDIRS      => 5,
-        CURLOPT_CONNECTTIMEOUT => 5,
-        CURLOPT_TIMEOUT        => 8,
-        CURLOPT_RANGE          => '0-1023',
-        CURLOPT_USERAGENT      => 'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36',
-        CURLOPT_REFERER        => MGEB_DOMAIN . '/',
-        CURLOPT_SSL_VERIFYPEER => false,
-        CURLOPT_SSL_VERIFYHOST => 0,
-        CURLOPT_HTTPHEADER     => ['Accept: */*'],
-    ]);
-    $body  = curl_exec($ch);
-    $ctype = strtolower((string)curl_getinfo($ch, CURLINFO_CONTENT_TYPE));
-    curl_close($ch);
-
-    if (!is_string($body)) $body = '';
-
-    // 1) Content-Type fiável
-    if (strpos($ctype, 'mpegurl') !== false)   return 'hls';
-    if (strpos($ctype, 'dash+xml') !== false)  return 'dash';
-    if (strpos($ctype, 'video/mp4') !== false) return 'mp4';
-    if (strpos($ctype, 'video/webm') !== false)return 'webm';
-
-    // 2) Assinatura do corpo
-    $head = ltrim(substr($body, 0, 64));
-    if (strpos($head, '#EXTM3U') === 0) return 'hls';
-    if (strpos($head, '<?xml') === 0 && strpos($body, '<MPD') !== false) return 'dash';
-    if (strlen($body) >= 8 && substr($body, 4, 4) === 'ftyp') return 'mp4';
-    if (strlen($body) >= 4 && substr($body, 0, 4) === "\x1A\x45\xDF\xA3") return 'webm';
-
-    // 3) Fallback: HLS (é o que estes serviços normalmente servem)
-    return 'hls';
 }
 
 /* ============================================================
@@ -124,6 +83,7 @@ if (isset($_GET['source']) && $_GET['source'] === '1') {
 
 /* ============================================================
  *  EMBED ?embed=<token>
+ *  Calcula a URL directa e entrega-a ao JW Player com type=mp4.
  * ============================================================ */
 if (isset($_GET['embed'])) {
     $token = (string)$_GET['embed'];
@@ -140,24 +100,12 @@ if (isset($_GET['embed'])) {
     $label  = (string)($entry['label']  ?? 'HD');
     $poster = (string)($entry['poster'] ?? PLAYMOZ_POSTER_FALLBACK);
 
-    // URL directa (só o PHP a calcula)
-    $playUrl = pm_mgeb_url($id, $type);
-
-    // Detecta o tipo REAL (cache no próprio token: 1 chamada por token)
-    $detected = (string)($entry['detected'] ?? '');
-    if ($detected === '') {
-        $detected = pm_detect_stream_type($playUrl);
-        $entry['detected'] = $detected;
-        pm_store_put($token, $entry);
-    }
-
-    // Ordem dos sources: detectado primeiro, alternativa a seguir
-    $altMap = ['hls' => 'mp4', 'mp4' => 'hls', 'dash' => 'mp4', 'webm' => 'mp4'];
-    $alt    = $altMap[$detected] ?? 'mp4';
+    // URL final — directa, sem probe, sem redirect.
+    $playUrl  = pm_mgeb_url($id, $type);
+    $playType = 'mp4';
 
     $urlJs    = json_encode($playUrl,  JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_UNESCAPED_SLASHES);
-    $primJs   = json_encode($detected, JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT);
-    $altJs    = json_encode($alt,      JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT);
+    $typeJs   = json_encode($playType, JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT);
     $labelJs  = json_encode($label,    JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT);
     $posterJs = json_encode($poster,   JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_UNESCAPED_SLASHES);
 
@@ -304,10 +252,12 @@ function pmHideLoading(){
 
 var player = jwplayer("ani-player");
 player.setup({
-  sources: [
-    { file: <?= $urlJs ?>, label: <?= $labelJs ?>, type: <?= $primJs ?>, default: "true" },
-    { file: <?= $urlJs ?>, label: <?= $labelJs ?>, type: <?= $altJs ?> }
-  ],
+  sources: [{
+    file: <?= $urlJs ?>,
+    label: <?= $labelJs ?>,
+    type: <?= $typeJs ?>,
+    default: "true"
+  }],
   aspectratio: "16:9",
   startparam: "start",
   primary: "html5",
