@@ -1,0 +1,29 @@
+PLAYMOZ · Acabamento visual e servidor MGEB (séries)
+
+SÉRIES
+- Servidor 1: fonte RedeFlix, mantida.
+- Servidor 2: MGEB; lê o HTML do episódio por ID TMDB, temporada e episódio.
+- O antigo iframe de player externo foi removido das séries.
+- Se forem encontrados vários caminhos de vídeo, aparece um segundo selector de fontes.
+- URLs repetidas que só diferem na assinatura são agrupadas.
+- Suporte a links .m3u8, .mp4 e .mpd no selector.
+- HLS/DASH usam o endereço original no player interno; o proxy MP4 não serve para reescrever manifestos ou fragmentos HLS.
+- Primeiro tenta mgeb.lat e usa mgeb.site se a primeira página não responder.
+
+APARÊNCIA
+- Dialogos glassmorphism transparentes sobre banner TMDB, já carregado no projecto.
+- Tipografia DM Sans (com fallback de sistema).
+- Ícones SVG, botões arredondados, centralização responsiva e ajustes para ecrãs pequenos.
+- Mensagens de espera, falha e escolha de servidor.
+
+FICHEIROS ALTERADOS
+- serie/index.php
+- series/index.php
+- A/serie/index.php
+
+NOTAS DE TESTE
+- Sintaxe PHP e JavaScript validada localmente.
+- A reprodução real não foi confirmada neste ambiente: a disponibilidade das fontes, HLS cross-origin/CORS, permissões e validade de tokens dependem dos servidores externos.
+- O selector não garante que todos os links listados sejam reproduzíveis.
+- As fontes deverão ser utilizadas apenas quando existir autorização para as reproduzir.
+- Para melhor fiabilidade, o servidor de conteúdos deve permitir pedidos de manifestos e segmentos directamente do browser.

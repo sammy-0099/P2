@@ -1,0 +1,43 @@
+RewriteEngine On
+RewriteRule ^(tv|serie|series)/([0-9]+)/([0-9]+)/([0-9]+)/?$ serie/index.php?id=$2&season=$3&episode=$4 [L,QSA,NC]
+RewriteBase /A/
+Options -Indexes
+
+# ============================================================
+# NÃO REESCREVER ARQUIVOS E PASTAS EXISTENTES
+# ============================================================
+RewriteCond %{REQUEST_FILENAME} -f [OR]
+RewriteCond %{REQUEST_FILENAME} -d
+RewriteRule ^ - [L]
+
+# ============================================================
+# FILMES
+# ============================================================
+RewriteRule ^movie/([0-9]+)/?$ movie.php?id=$1 [L,QSA]
+RewriteRule ^filmes/([0-9]+)/?$ movie.php?id=$1 [L,QSA]
+
+# ============================================================
+# SÉRIE — LISTA
+# /tv/108978
+# /series/108978
+# ============================================================
+RewriteRule ^tv/([0-9]+)/?$ tv.php?id=$1 [L,QSA]
+RewriteRule ^series/([0-9]+)/?$ tv.php?id=$1 [L,QSA]
+
+# ============================================================
+# SÉRIE — EPISÓDIO
+#
+# /tv/108978/1/1
+# /series/108978/1/1
+#
+#       ↓
+#
+# episode.php?id=108978&t=1&e=1
+# ============================================================
+RewriteRule ^tv/([0-9]+)/([0-9]+)/([0-9]+)/?$ episode.php?id=$1&t=$2&e=$3 [L,QSA]
+RewriteRule ^series/([0-9]+)/([0-9]+)/([0-9]+)/?$ episode.php?id=$1&t=$2&e=$3 [L,QSA]
+
+# ============================================================
+# DOCUMENTAÇÃO
+# ============================================================
+RewriteRule ^docs/?$ index.php [L,QSA]

@@ -1,0 +1,15 @@
+{
+  "name": "playmoz-hyper-network-scanner",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Captura de recursos de media autorizados nas páginas Assistir do Hyper através de Chromium CDP.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "check": "node --check server.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {}
+}

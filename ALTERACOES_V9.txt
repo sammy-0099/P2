@@ -1,0 +1,1 @@
+V9: reprodução interna MP4/WebM com HTML5, HLS com hls.js e DASH com dash.js. Aviso para origens HTTP em HTTPS. Código das fontes e selector preservados. Links com DRM, bloqueio CORS, codecs não suportados e URLs expirados não podem ser forçados a reproduzir.

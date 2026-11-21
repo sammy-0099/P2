@@ -1,0 +1,1 @@
+Selector visual V5: título central, backdrop TMDB, estilo simples semelhante ao selector das páginas /filme/550 e /serie/96677/1/1. Mantida a lógica de fontes da V4. As etiquetas Dublado são visuais, não uma validação de idiomas.

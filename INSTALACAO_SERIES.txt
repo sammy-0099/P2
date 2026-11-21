@@ -1,0 +1,19 @@
+PLAYMOZ - SERIES
+
+Rotas internas:
+- /serie/{tmdb_id}/{temporada}/{episodio}
+- /series/{tmdb_id}/{temporada}/{episodio}
+- /tv/{tmdb_id}/{temporada}/{episodio}
+
+Servidor 1 (Hyper):
+- Consulta a ficha /series/{slug}.
+- Encontra o link Assistir do episódio e abre a rota exacta da temporada/episódio.
+- Captura o recurso MP4/HLS/DASH pela rede através de Chromium/CDP no servidor.
+- Não utiliza /api/download.
+
+Servidor 2 mantém o resolver alternativo RedeFlix.
+Servidor 3 mantém a fonte alternativa MGEB.
+
+Requisitos: PHP 8+ com cURL, Node.js 22+, Chromium e Apache com mod_rewrite
+e AllowOverride habilitados. É necessário alojamento que permita manter um
+processo Node.js persistente. O scanner é configurado em scanner/README.md.
