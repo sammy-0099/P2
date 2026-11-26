@@ -1,0 +1,6 @@
+PlayMoz - correções de identificação TMDB/IMDb
+1. Corrigida comparação com BLOCKED_HOST vazio, que rejeitava TODAS as respostas HTTP em requestUrl().
+2. Adicionada segunda consulta TMDB (detalhes) quando external_ids não fornece IMDb.
+3. Mantidos os restantes ficheiros e estrutura original.
+4. Configurar TMDB_API_KEY no ambiente do servidor, se necessário.
+5. A disponibilidade de fontes externas não é garantida.

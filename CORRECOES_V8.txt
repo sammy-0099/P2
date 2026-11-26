@@ -1,0 +1,1 @@
+V8: Corrigidos pedidos internos para URLs da mesma origem sem detectar HTTP/HTTPS pelo PHP; eliminados URLs absolutos HTTP nos links de embed e stream; mensagens detalhadas para falhas de fetch e JSON. Banner em ecrã completo mantido. A reprodução depende da disponibilidade das fontes e da configuração do alojamento.

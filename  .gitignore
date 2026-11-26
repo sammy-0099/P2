@@ -1,0 +1,14 @@
+# arquivos temporários do download
+a.json.tmp
+*.tmp
+
+# lixo de sistema
+.DS_Store
+Thumbs.db
+*.log
+
+# editor
+.vscode/
+.idea/
+*.swp
+*~

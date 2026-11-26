@@ -1,0 +1,62 @@
+name: Atualizar catálogo Xtream
+
+on:
+  schedule:
+    - cron: '0 */3 * * *' # A cada 3 horas
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: atualizar-catalogo
+  cancel-in-progress: false
+
+jobs:
+  atualizar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60 # 1 hora (para dar tempo de baixar as séries)
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Instalar jq e curl
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq jq curl
+
+      - name: Corrigir CRLF (Evita erro no bash)
+        run: |
+          sed -i 's/\r$//' scripts/baixar.sh scripts/baixar_series.sh
+          chmod +x scripts/baixar.sh scripts/baixar_series.sh
+
+      - name: Baixar Filmes (a.json)
+        env:
+          XTREAM_BASE: ${{ secrets.XTREAM_BASE }}
+          XTREAM_USER: ${{ secrets.XTREAM_USER }}
+          XTREAM_PASS: ${{ secrets.XTREAM_PASS }}
+        run: bash scripts/baixar.sh
+
+      - name: Baixar Séries (s.json)
+        env:
+          XTREAM_BASE: ${{ secrets.XTREAM_BASE }}
+          XTREAM_USER: ${{ secrets.XTREAM_USER }}
+          XTREAM_PASS: ${{ secrets.XTREAM_PASS }}
+        run: bash scripts/baixar_series.sh
+
+      - name: Commit e push (amend — sem acumular histórico)
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add a.json s.json
+          if git diff --cached --quiet; then
+            echo "Sem mudanças."
+          else
+            git commit --amend -m "chore: atualiza catalogos ($(date -u +%Y-%m-%d_%H:%M))"
+            git push --force-with-lease
+            echo "Catalogos atualizados."
+          fi
