@@ -1,1 +1,0 @@
-V7: banner em ecrã completo com cover; selector mais transparente e ligeiramente menor.
